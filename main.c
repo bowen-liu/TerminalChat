@@ -13,7 +13,7 @@
 const char* ipaddr = "127.0.0.1";
 const int port = 6996;
 
-#define bufsize 256
+#define bufsize 512
 char buffer[bufsize];
 
 void server()
@@ -77,6 +77,32 @@ void server()
             return;
         }
 
+        //Echo the client until it closes the connection
+        while(1)
+        {
+            retval = recv(client_socketfd, &buffer, bufsize, 0);
+            if(retval < 0)
+            {
+                perror("Failed to receive from client\n");
+                return;
+            }
+
+            if(strcmp(buffer, "!close") == 0)
+            {
+                printf("Closing connection with client client %s on port %d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+                break;
+            }
+            printf("%s\n", buffer);
+            
+            //Reply back to client
+            retval = send(client_socketfd, "OK", 13, 0);
+            if(retval < 0)
+            {
+                perror("Failed to send message to client\n");
+                return;
+            }
+        }
+
         //Terminate the connection with the client
         close(client_socketfd);
     }
@@ -123,6 +149,33 @@ void client()
     }
 
     printf("%s\n", buffer);
+
+    //Send messages to the host forever
+    while(1)
+    {
+        scanf("%512s", buffer);
+
+        retval = send(my_socketfd, &buffer, bufsize, 0);
+        if(retval < 0)
+        {
+            perror("Failed to receive greeting message from server\n");
+            return;
+        }
+
+        if(strcmp(buffer, "!close") == 0)
+        {
+            printf("Closing connection!\n");
+            break;
+        }
+
+        retval = recv(my_socketfd, &buffer, bufsize, 0);
+        if(retval < 0)
+        {
+            perror("Failed to receive greeting message from server\n");
+            return;
+        }
+        printf("Server replied: %s\n", buffer);
+    }
 
     //Terminate the connection with the server
     close(my_socketfd);

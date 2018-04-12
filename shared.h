@@ -2,6 +2,7 @@
 #define _SHARED_H_
 
 #include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 #include <unistd.h>
@@ -12,7 +13,7 @@
 #include <arpa/inet.h> 
 
 
-#define bufsize 512
+#define BUFSIZE 512
 
 
 

@@ -4,15 +4,13 @@
 #define SERVER_IP   "127.0.0.1"
 #define SERVER_PORT 6996
 
-char buffer[bufsize];
-
 extern void server(const char* ipaddr, const int port);
 extern void client(const char* ipaddr, const int port);
 
 
 int main(int argc, char *argv[])
 {
-    if(argc < 1)
+    if(argc < 2)
     {
         printf("Not enough args...\n");
         return 0;

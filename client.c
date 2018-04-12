@@ -1,6 +1,10 @@
 #include "shared.h"
 
-extern char buffer[bufsize];            //in main.c
+
+//Receive buffers
+static char *buffer;
+static size_t buffer_size = BUFSIZE;
+
 
 void client(const char* ipaddr, const int port)
 {
@@ -8,6 +12,8 @@ void client(const char* ipaddr, const int port)
     struct sockaddr_in server_addr;     //Server's information struct
 
     int retval;
+
+    buffer = malloc(BUFSIZE * sizeof(char));
 
     //Create a TCP socket 
     my_socketfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -31,7 +37,7 @@ void client(const char* ipaddr, const int port)
     }
 
     //Receive a greeting message from the server
-    retval = recv(my_socketfd, &buffer, bufsize, 0);
+    retval = recv(my_socketfd, buffer, BUFSIZE, 0);
     if(retval < 0)
     {
         perror("Failed to receive greeting message from server\n");
@@ -43,9 +49,9 @@ void client(const char* ipaddr, const int port)
     //Send messages to the host forever
     while(1)
     {
-        scanf("%512s", buffer);
+        getline(&buffer, &buffer_size, stdin);
 
-        retval = send(my_socketfd, &buffer, bufsize, 0);
+        retval = send(my_socketfd, buffer, BUFSIZE, 0);
         if(retval < 0)
         {
             perror("Failed to receive greeting message from server\n");
@@ -58,7 +64,7 @@ void client(const char* ipaddr, const int port)
             break;
         }
 
-        retval = recv(my_socketfd, &buffer, bufsize, 0);
+        retval = recv(my_socketfd, buffer, BUFSIZE, 0);
         if(retval < 0)
         {
             perror("Failed to receive greeting message from server\n");

@@ -10,6 +10,8 @@ extern void client(const char* ipaddr, const int port, char *username);
 
 int main(int argc, char *argv[])
 {
+    //TODO: use getopt
+    
     if(argc < 2)
     {
         printf("Not enough args...\n");

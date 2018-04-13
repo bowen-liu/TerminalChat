@@ -1,7 +1,7 @@
 #ifndef _SERVER_H_
 #define _SERVER_H_
 
-#include "../shared.h"
+#include "../common/common.h"
 #include "../libraries/hashtable/hash-table.h"
 
 #include <sys/epoll.h>

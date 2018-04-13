@@ -10,9 +10,9 @@ static int server_socketfd;
 static struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
 
 //socket structures for the current client being served
-int client_socketfd;
-struct sockaddr_in client_addr;
-int client_addr_leng;
+static int client_socketfd;
+static struct sockaddr_in client_addr;
+static int client_addr_leng;
 
 //epoll structures for handling multiple client_socketfd
 static struct epoll_event events[MAX_EPOLL_EVENTS];
@@ -22,13 +22,9 @@ static int epoll_fd;
 unsigned int last_userid = 0;                           
 
 
-/*static void print_client(int client_socketfd)
-{
-    struct sockaddr_in client_addr;
-    int client_addr_leng;
-
-    printf("%s:%d", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-}*/
+/******************************/
+/*     Basic Send/Receive     */
+/******************************/
 
 static void disconnect_client(int client_socketfd)
 {
@@ -38,6 +34,43 @@ static void disconnect_client(int client_socketfd)
     close(client_socketfd);
 }
 
+static unsigned int send_msg(int socket, char* buffer, size_t size)
+{
+    int bytes = send(socket, buffer, size, 0);
+    if(bytes < 0)
+    {
+        perror("Failed to send greeting message to client\n");
+        disconnect_client(socket);
+        return 0;
+    }
+    return bytes;
+}
+
+static unsigned int recv_msg(int socket, char* buffer, size_t size)
+{
+    int bytes = recv(socket, buffer, BUFSIZE, 0);
+    if(bytes < 0)
+    {
+        perror("Failed to receive from client. Disconnecting...\n");
+        disconnect_client(socket);
+        return 0;
+    }
+
+    //Client has disconnected unexpectedly
+    else if(bytes == 0)
+    {
+        printf("Unexpected disconnect from client %s:%d : \n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+        disconnect_client(socket);
+        return 0;
+    }
+
+    return bytes;
+}
+
+
+/******************************/
+/*      Client Operations     */
+/******************************/
 
 static int parse_client_command()
 {
@@ -50,15 +83,10 @@ static int parse_client_command()
 
         sscanf(buffer, "!register:username=%s", username);  
         printf("Registering user \"%s\" with userid %d\n", username, ++last_userid);
-
         sprintf(buffer, "!regreply:username=%s,userid=%u", username, last_userid);
-        bytes = send(client_socketfd, buffer, BUFSIZE, 0);
-        if(bytes < 0)
-        {
-            perror("Failed to send greeting message to client\n");
-            //disconnect_client(client_socketfd);
+        
+        if(!send_msg(client_socketfd, buffer, BUFSIZE))
             return 0;
-        }
     }
 
     else if(strcmp(buffer, "!close") == 0)
@@ -120,8 +148,7 @@ static inline void server_main_loop()
                 if(client_socketfd < 0)
                 {
                     perror("Error accepting client!\n");
-                    //continue;
-                    return;
+                    continue;
                 }
                 printf("Accepted client %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
@@ -134,39 +161,26 @@ static inline void server_main_loop()
                 if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socketfd, &new_event) < 0) 
                 {
                     perror("Failed to register the new client socket with epoll!\n");
-                    //close(client_socketfd);
+                    close(client_socketfd);
                     return;
                 }
-
 
                 //Send a greeting to the client
-                bytes = send(client_socketfd, "Hello World!", 13, 0);
-                if(bytes < 0)
-                {
-                    perror("Failed to send greeting message to client\n");
-                    //disconnect_client(client_socketfd);
-                    return;
-                }
+                if(!send_msg(client_socketfd, "Hello World!", 13))
+                    continue;
             }
 
             //When an event is occuring on an existing client connection
             else
             {                
                 client_socketfd = events[i].data.fd;
-                bytes = recv(client_socketfd, buffer, BUFSIZE, 0);
-
-                //Load the client's information from the socket's FD
                 getsockname(client_socketfd, (struct sockaddr*) &client_addr, &client_addr_leng);
-                printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
 
-                if(bytes == 0)
+                bytes = recv_msg(client_socketfd, buffer, BUFSIZE);
+                if(!bytes)
                     continue;
-                if(bytes < 0)
-                {
-                    perror("Failed to receive from client\n");
-                    //disconnect_client(client_socketfd);
-                    return;
-                }
+                
+                printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
                 printf("%s\n", buffer);
 
                 //Parse as a command if message begins with '!'
@@ -177,19 +191,18 @@ static inline void server_main_loop()
                     continue;
                                 
                 //Reply back to client
-                bytes = send(client_socketfd, "Received.", 10, 0);
-                if(bytes < 0)
-                {
-                    perror("Failed to send message to client\n");
-                    //disconnect_client(client_socketfd);
-                    return;
-                }
+                if(send_msg(client_socketfd, "Received.", 10))
+                    continue;
             }
                 
         }
     }
 }
 
+
+/******************************/
+/*     Server Entry Point     */
+/******************************/
 
 void server(const char* ipaddr, const int port)
 {

@@ -14,6 +14,69 @@ static unsigned int userID;
 static char* userName;
 
 
+/******************************/
+/*     Basic Send/Receive     */
+/******************************/
+
+static unsigned int send_msg(int socket, char* buffer, size_t size)
+{
+    int bytes = send(socket, buffer, size, 0);
+    if(bytes < 0)
+    {
+        perror("Failed to sent message to the server...\n");
+        return 0;
+    }
+
+    return bytes;
+}
+
+static unsigned int recv_msg(int socket, char* buffer, size_t size)
+{
+    int bytes = recv(socket, buffer, size, 0);
+    if(bytes < 0)
+    {
+        perror("Failed to receive message from server\n");
+        return 0;
+    }
+    else if(bytes == 0)
+    {
+        perror("Server has disconnected unexpectedly...\n");
+        return 0;
+    }
+
+    return bytes;
+}
+
+
+
+/******************************/
+/*      Client Operations     */
+/******************************/
+
+static void register_with_server()
+{
+    int bytes;
+    
+    //Receive a greeting message from the server
+    if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+        return;
+    printf("%s\n", buffer);
+
+    //Register my desired username
+    printf("Registering username \"%s\"...\n", userName);
+    sprintf(buffer, "!register:username=%s", userName);
+    if(!send_msg(my_socketfd, buffer, BUFSIZE))
+        return;
+
+    //Parse registration reply from server
+    if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+        return;
+    
+    sscanf(buffer, "!regreply:username=%[^,],userid=%u", userName, &userID);
+    printf("Registered with server as \"%s\", userid: %u\n", userName, userID);
+}
+
+
 static int handle_user_command()
 {
     //Todo: escape commands like "!register"
@@ -22,7 +85,7 @@ static int handle_user_command()
 }
 
 
-static void client_main_loop()
+static inline void client_main_loop()
 {
      int bytes;
      
@@ -38,12 +101,9 @@ static void client_main_loop()
         }
 
         //Transmit the line read from stdin to the server
-        bytes = send(my_socketfd, buffer, BUFSIZE, 0);
-        if(bytes < 0)
-        {
-            perror("Failed to receive greeting message from server\n");
+        if(!send_msg(my_socketfd, buffer, BUFSIZE))
             return;
-        }
+
 
         if(strcmp(buffer, "!close") == 0)
         {
@@ -51,53 +111,22 @@ static void client_main_loop()
             break;
         }
 
-        bytes = recv(my_socketfd, buffer, BUFSIZE, 0);
-        if(bytes < 0)
-        {
-            perror("Failed to receive greeting message from server\n");
+        //Anticipate a reply from the server
+        if(!recv_msg(my_socketfd, buffer, BUFSIZE))
             return;
-        }
+
         printf("Server replied: %s\n", buffer);
     }
 
 }
 
 
-static void register_with_server()
-{
-    int bytes;
-    
-    //Receive a greeting message from the server
-    bytes = recv(my_socketfd, buffer, BUFSIZE, 0);
-    if(bytes <= 0)
-    {
-        perror("Failed to send greeting message from server\n");
-        return;
-    }
-
-    printf("%s\n", buffer);
-
-    //Register my desired username
-    printf("Registering username \"%s\"...\n", userName);
-    sprintf(buffer, "!register:username=%s", userName);
-    bytes = send(my_socketfd, buffer, BUFSIZE, 0);
-    if(bytes <= 0)
-    {
-        perror("Failed to send to server\n");
-        return;
-    }
 
 
-    //Parse registration reply from server
-    bytes = recv(my_socketfd, buffer, BUFSIZE, 0);
-    if(bytes <= 0)
-    {
-        perror("Failed to receive greeting message from server\n");
-        return;
-    }
-    sscanf(buffer, "!regreply:username=%[^,],userid=%u", userName, &userID);
-    printf("Registered with server as \"%s\", userid: %u\n", userName, userID);
-}
+
+/******************************/
+/*     Client Entry Point     */
+/******************************/
 
 
 void client(const char* ipaddr, const int port,  char *username)

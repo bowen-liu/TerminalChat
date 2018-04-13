@@ -1,0 +1,30 @@
+CC=gcc
+
+all : clean_partial hashtable common.o server.o client.o main
+
+clean_partial:
+	rm -f *.o a.out
+
+main: server.o client.o
+	$(CC) -o a.out main.c server.o client.o
+
+hashtable:
+	$(CC) -c libraries/hashtable/hash-pointer.c
+	$(CC) -c libraries/hashtable/hash-string.c
+	$(CC) -c libraries/hashtable/hash-int.c
+	$(CC) -c libraries/hashtable/hash-table.c
+
+common.o:
+	$(CC) -c common/common.c
+
+server.o: hashtable common.o
+	$(CC) -c server/server.c
+
+client.o: 
+	$(CC) -c client/client.c
+
+
+
+clean:
+	rm -f *.o a.out
+

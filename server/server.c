@@ -1,10 +1,5 @@
 #include "server.h"
 
-
-//Receive buffers
-static char *buffer;
-static size_t buffer_size = BUFSIZE;
-
 //Server socket structures
 static int server_socketfd;
 static struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
@@ -14,17 +9,40 @@ static int client_socketfd;
 static struct sockaddr_in client_addr;
 static int client_addr_leng;
 
-//epoll structures for handling multiple client_socketfd
+//epoll structures for handling multiple clients 
 static struct epoll_event events[MAX_EPOLL_EVENTS];
 static int epoll_fd;  
 
+//Receive buffers
+static char *buffer;
+static size_t buffer_size = BUFSIZE;
+
 //Server variables
-unsigned int last_userid = 0;                           
+unsigned int last_userid = 0;     
 
 
 /******************************/
-/*     Basic Send/Receive     */
-/******************************/
+/*          Helpers           */
+/******************************/                      
+
+static int register_fd_with_epoll(int socketfd)
+{
+    struct epoll_event new_event;
+    const int event_flags = EPOLLIN;
+    
+    new_event.events = event_flags;
+    new_event.data.fd = socketfd;
+
+    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socketfd, &new_event) < 0) 
+    {
+        perror("Failed to register the new client socket with epoll!\n");
+        close(socketfd);
+        return 0;
+    }
+
+    return 1;
+}
+
 
 static void disconnect_client(int client_socketfd)
 {
@@ -33,6 +51,11 @@ static void disconnect_client(int client_socketfd)
     
     close(client_socketfd);
 }
+
+/******************************/
+/*     Basic Send/Receive     */
+/******************************/
+
 
 static unsigned int send_msg(int socket, char* buffer, size_t size)
 {
@@ -72,7 +95,7 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
 /*      Client Operations     */
 /******************************/
 
-static int parse_client_command()
+static inline int parse_client_command()
 {
     int bytes; 
 
@@ -105,13 +128,82 @@ static int parse_client_command()
 }
 
 
+static inline int handle_new_connection()
+{
+    
+    client_addr_leng = sizeof(struct sockaddr_in);
+    client_socketfd = accept(server_socketfd, (struct sockaddr*) &client_addr, &client_addr_leng);
+    if(client_socketfd < 0)
+    {
+        perror("Error accepting client!\n");
+        return 0;
+    }
+    printf("Accepted client %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+
+    //Register the new client's FD into epoll's event list, and mark it as nonblocking
+    fcntl(client_socketfd, F_SETFL, O_NONBLOCK);
+    if(!register_fd_with_epoll(client_socketfd))
+        return 0;    
+
+    //Send a greeting to the client
+    if(!send_msg(client_socketfd, "Hello World!", 13))
+        return 0;
+    
+    return 1;
+} 
+
+static inline int handle_client_msg()
+{
+    int bytes, retval;
+    
+    getsockname(client_socketfd, (struct sockaddr*) &client_addr, &client_addr_leng);
+    bytes = recv_msg(client_socketfd, buffer, BUFSIZE);
+    if(!bytes)
+        return 0;
+    
+    printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
+    printf("%s\n", buffer);
+
+    //Parse as a command if message begins with '!'
+    if(buffer[0] == '!')
+        if(parse_client_command() < 0)
+            return 0;
+            
+    //Reply back to client
+    if(!send_msg(client_socketfd, "Received.", 10))
+        return 0;
+    
+    return 1;
+}
+
+static inline int handle_stdin()
+{
+    int bytes; 
+
+    //Read from stdin and remove the newline character
+    bytes = getline(&buffer, &buffer_size, stdin);
+    if (buffer[bytes-1] == '\n') 
+    {
+        buffer[bytes-1] = '\0';
+        --bytes;
+    }
+    
+    printf("stdin: %s\n", buffer);
+
+    return bytes;
+}
+
+
+
+
+
+/******************************/
+/*     Server Entry Point     */
+/******************************/
+
 static inline void server_main_loop()
 {
-    struct epoll_event new_event;
-
-    int bytes, retval;
     int ready_count, i;
-
     
     while(1)
     {
@@ -129,70 +221,20 @@ static inline void server_main_loop()
             //When the administrator enters a command from stdin
             if(events[i].data.fd == 0)
             {
-                //Read from stdin and remove the newline character
-                bytes = getline(&buffer, &buffer_size, stdin);
-                if (buffer[bytes-1] == '\n') 
-                {
-                    buffer[bytes-1] = '\0';
-                    --bytes;
-                }
-                
-                printf("stdin: %s\n", buffer);
+                handle_stdin();
             }
             
             //When a new connection arrives to the server socket, accept it
             else if(events[i].data.fd == server_socketfd)
             {
-                client_addr_leng = sizeof(struct sockaddr_in);
-                client_socketfd = accept(server_socketfd, (struct sockaddr*) &client_addr, &client_addr_leng);
-                if(client_socketfd < 0)
-                {
-                    perror("Error accepting client!\n");
-                    continue;
-                }
-                printf("Accepted client %s:%d\n", inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-
-                //Register the new client's FD into epoll's event list, and mark it as nonblocking
-                fcntl(client_socketfd, F_SETFL, O_NONBLOCK);
-                
-                new_event.events = EPOLLIN;
-                new_event.data.fd = client_socketfd;
-
-                if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, client_socketfd, &new_event) < 0) 
-                {
-                    perror("Failed to register the new client socket with epoll!\n");
-                    close(client_socketfd);
-                    return;
-                }
-
-                //Send a greeting to the client
-                if(!send_msg(client_socketfd, "Hello World!", 13))
-                    continue;
+                handle_new_connection();
             }
 
             //When an event is occuring on an existing client connection
             else
             {                
                 client_socketfd = events[i].data.fd;
-                getsockname(client_socketfd, (struct sockaddr*) &client_addr, &client_addr_leng);
-
-                bytes = recv_msg(client_socketfd, buffer, BUFSIZE);
-                if(!bytes)
-                    continue;
-                
-                printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(client_addr.sin_addr), ntohs(client_addr.sin_port));
-                printf("%s\n", buffer);
-
-                //Parse as a command if message begins with '!'
-                if(buffer[0] == '!')
-                    retval = parse_client_command();
-                
-                if(retval < 0)
-                    continue;
-                                
-                //Reply back to client
-                if(send_msg(client_socketfd, "Received.", 10))
-                    continue;
+                handle_client_msg();
             }
                 
         }
@@ -200,9 +242,6 @@ static inline void server_main_loop()
 }
 
 
-/******************************/
-/*     Server Entry Point     */
-/******************************/
 
 void server(const char* ipaddr, const int port)
 {
@@ -234,7 +273,6 @@ void server(const char* ipaddr, const int port)
 
 
     /*Setup a listener on the socket*/
-    fcntl(server_socketfd, F_SETFL, O_NONBLOCK);                    //Set server socket to nonblocking, as needed by epoll
     if(listen(server_socketfd, MAX_CONNECTION_BACKLOG) < 0)
     {
         perror("Failed to listen to the socket!\n");
@@ -251,24 +289,15 @@ void server(const char* ipaddr, const int port)
     }
 
 
-    /*Register the server socket to the epoll list*/
-    new_event.events = EPOLLIN;
-    new_event.data.fd = server_socketfd;
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, server_socketfd, &new_event) < 0) 
-    {
-        perror("Failed to register the server socket with epoll!\n");
-        return;
-    }
+    /*Register the server socket to the epoll list, and also mark it as nonblocking*/
+    fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
+    if(!register_fd_with_epoll(server_socketfd))
+            return;   
+    
 
-
-    /*Register stdin to the epoll list*/
-    new_event.events = EPOLLIN;
-    new_event.data.fd = 0;                                          //0 = fd for stdin
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, 0, &new_event) < 0) 
-    {
-        perror("Failed to register stdin with epoll!\n");
-        return;
-    }
+    /*Register stdin (fd = 0) to the epoll list*/
+    if(!register_fd_with_epoll(0))
+        return;   
 
 
     /*Begin handling requests*/

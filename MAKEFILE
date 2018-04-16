@@ -1,9 +1,6 @@
 CC=gcc
 
-all : clean_partial hashtable common.o server.o client.o main
-
-clean_partial:
-	rm -f *.o a.out
+all : clean hashtable common.o server.o client.o main
 
 main: server.o client.o
 	$(CC) -o a.out main.c server.o client.o
@@ -22,8 +19,6 @@ server.o: hashtable common.o
 
 client.o: 
 	$(CC) -c client/client.c
-
-
 
 clean:
 	rm -f *.o a.out

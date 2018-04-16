@@ -85,6 +85,11 @@ static int handle_user_command()
 }
 
 
+
+/******************************/
+/*     Client Entry Point     */
+/******************************/
+
 static inline void client_main_loop()
 {
      int bytes;
@@ -120,13 +125,6 @@ static inline void client_main_loop()
 
 }
 
-
-
-
-
-/******************************/
-/*     Client Entry Point     */
-/******************************/
 
 
 void client(const char* ipaddr, const int port,  char *username)

@@ -12,8 +12,12 @@
 #include <netdb.h>
 #include <arpa/inet.h> 
 
+#include <sys/epoll.h>
+#include <fcntl.h>
+
 
 #define BUFSIZE 512
+#define USERNAME_LENG 32
 
 
 #endif

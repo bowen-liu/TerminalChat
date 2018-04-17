@@ -1,24 +1,18 @@
 CC=gcc
 
-all : clean hashtable common.o server.o client.o main
-
-main: server.o client.o
-	$(CC) -o a.out main.c server.o client.o
-
-hashtable:
-	$(CC) -c libraries/hashtable/hash-pointer.c
-	$(CC) -c libraries/hashtable/hash-string.c
-	$(CC) -c libraries/hashtable/hash-int.c
-	$(CC) -c libraries/hashtable/hash-table.c
+all : clean common.o server.o client.o main
 
 common.o:
 	$(CC) -c common/common.c
 
-server.o: hashtable common.o
+server.o: common.o
 	$(CC) -c server/server.c
 
 client.o: 
 	$(CC) -c client/client.c
+
+main: server.o client.o
+	$(CC) -o a.out main.c server.o client.o
 
 clean:
 	rm -f *.o a.out

@@ -20,7 +20,17 @@ static char* userName;
 
 static unsigned int send_msg(int socket, char* buffer, size_t size)
 {
-    int bytes = send(socket, buffer, size, 0);
+    int bytes;
+
+    if(size == 0)
+        return 0;
+    else if(size > buffer_size)
+    {
+        printf("Cannot send this message. Size too big\n");
+        return 0;
+    }
+    
+    bytes = send(socket, buffer, size, 0);
     if(bytes < 0)
     {
         perror("Failed to sent message to the server...\n");
@@ -106,7 +116,7 @@ static inline void client_main_loop()
         }
 
         //Transmit the line read from stdin to the server
-        if(!send_msg(my_socketfd, buffer, BUFSIZE))
+        if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
             return;
 
 
@@ -133,7 +143,7 @@ void client(const char* ipaddr, const int port,  char *username)
 
     printf("Username: %s\n", username);
 
-    buffer = malloc(BUFSIZE * sizeof(char));
+    buffer = calloc(BUFSIZE, sizeof(char));
     userName = username;
 
     //Create a TCP socket 

@@ -2,13 +2,16 @@
 #define _SERVER_H_
 
 #include "../common/common.h"
-#include "../libraries/hashtable/hash-table.h"
+#include "../library/uthash/uthash.h"                //http://troydhanson.github.io/uthash/       
 
-#include <sys/epoll.h>
-#include <fcntl.h>
+typedef struct {
+    int socketfd;                        //Key for the hashtable entry
+    struct sockaddr_in sockaddr;
+    int sockaddr_leng;
 
-#define MAX_CONNECTION_BACKLOG 8
-#define MAX_EPOLL_EVENTS    16 
+    char username[USERNAME_LENG];
+    UT_hash_handle hh;
+} Client;
 
 
 #endif

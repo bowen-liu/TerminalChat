@@ -12,7 +12,7 @@ client.o:
 	$(CC) -c client/client.c
 
 main: server.o client.o
-	$(CC) -o a.out main.c server.o client.o
+	$(CC) -o a.out main.c common.o server.o client.o
 
 clean:
 	rm -f *.o a.out

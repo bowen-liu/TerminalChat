@@ -24,25 +24,7 @@ unsigned int last_userid = 0;
 
 /******************************/
 /*          Helpers           */
-/******************************/      
-
-static int register_fd_with_epoll(int socketfd)
-{
-    struct epoll_event new_event;
-    const int event_flags = EPOLLIN;
-    
-    new_event.events = event_flags;
-    new_event.data.fd = socketfd;
-
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socketfd, &new_event) < 0) 
-    {
-        perror("Failed to register the new client socket with epoll!\n");
-        close(socketfd);
-        return 0;
-    }
-
-    return 1;
-}               
+/******************************/                 
 
 static void disconnect_client(Client *c)
 {
@@ -63,8 +45,11 @@ static void disconnect_client(Client *c)
 static unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
     int bytes;
-    
-    if(size > buffer_size)
+
+    if(size == 0)
+        return 0;
+        
+    else if(size > MAX_MSG_LENG)
     {
         printf("Cannot send this message. Size too big\n");
         return 0;
@@ -84,7 +69,10 @@ static unsigned int send_msg(Client *c, char* buffer, size_t size)
 static unsigned int send_bcast(char* buffer, size_t size)
 {
     int count = 0;
+    char bcast_msg[BUFSIZE];
     Client *curr, *temp;
+
+    sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
 
     //Send the message in the buffer to every active client
     HASH_ITER(hh, active_clients, curr, temp)
@@ -93,7 +81,7 @@ static unsigned int send_bcast(char* buffer, size_t size)
             continue;
         
         printf("Broadcasting to \"%s\"\n", curr->username);
-        send_msg(curr, buffer, size);
+        send_msg(curr, bcast_msg, strlen(bcast_msg)+1);
         ++count;
     }
     
@@ -174,16 +162,12 @@ static inline int handle_client_msg()
 
     //Parse as a command if message begins with '!'
     if(buffer[0] == '!')
-        if(parse_client_command() <= 0)
-            return 0;
-    //Broadcast message to all other active clients
-    else if (!send_bcast(buffer, buffer_size))
-        return 0;
-            
-    //Reply back to client
-    if(!send_msg(current_client, "Received.", 10))
-        return 0;
-    
+        return parse_client_command();
+
+    //Broadcast regular messages to all other active clients
+    else
+        send_bcast(buffer, buffer_size);
+        
     return 1;
 }
 
@@ -209,7 +193,7 @@ static inline int handle_new_connection()
 
     //Register the new client's FD into epoll's event list, and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(new_client->socketfd))
+    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd))
         return 0;    
 
     //Send a greeting to the client
@@ -291,6 +275,14 @@ void server(const char* ipaddr, const int port)
 {   
     /*Initialize network buffer*/
     buffer = calloc(BUFSIZE, sizeof(char));
+
+    /*Setup epoll to allow multiplexed IO to serve multiple clients*/
+    epoll_fd = epoll_create1(0);
+    if(epoll_fd < 0)
+    {
+        perror("Failed to create epoll!\n");
+        return;
+    }
     
     /*Create a TCP server socket*/
     server_socketfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -299,7 +291,6 @@ void server(const char* ipaddr, const int port)
         perror("Error creating socket!\n");
         return;
     }
-
 
     /*Bind specified IP/Port to the socket*/
     memset(&server_addr, 0, sizeof(struct sockaddr_in));
@@ -314,22 +305,14 @@ void server(const char* ipaddr, const int port)
         return;
     }
 
-    /*Setup epoll to allow multiplexed IO to serve multiple clients*/
-    epoll_fd = epoll_create1(0);
-    if(epoll_fd < 0)
-    {
-        perror("Failed to create epoll!\n");
-        return;
-    }
-
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(server_socketfd))
+    if(!register_fd_with_epoll(epoll_fd, server_socketfd))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(0))
+    if(!register_fd_with_epoll(epoll_fd, 0))
         return;   
 
     /*Begin listening for incoming connections on the server socket*/

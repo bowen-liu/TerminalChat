@@ -18,6 +18,9 @@
 
 #define BUFSIZE 512
 #define USERNAME_LENG 32
+#define MAX_MSG_LENG (BUFSIZE - USERNAME_LENG - 3)      
+
+int register_fd_with_epoll(int epollfd, int socketfd);
 
 
 #endif

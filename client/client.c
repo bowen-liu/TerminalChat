@@ -1,9 +1,14 @@
 #include "client.h"
 
+#define MAX_EPOLL_EVENTS    32 
 
 //Socket for communicating with the server
 static int my_socketfd;                    //My (client) socket fd
 static struct sockaddr_in server_addr;     //Server's information struct
+
+//epoll event structures for handling multiple clients 
+static struct epoll_event events[MAX_EPOLL_EVENTS];
+static int epoll_fd;
 
 //Receive buffers
 static char *buffer;
@@ -24,7 +29,8 @@ static unsigned int send_msg(int socket, char* buffer, size_t size)
 
     if(size == 0)
         return 0;
-    else if(size > buffer_size)
+
+    else if(size > MAX_MSG_LENG)
     {
         printf("Cannot send this message. Size too big\n");
         return 0;
@@ -75,7 +81,7 @@ static void register_with_server()
     //Register my desired username
     printf("Registering username \"%s\"...\n", userName);
     sprintf(buffer, "!register:username=%s", userName);
-    if(!send_msg(my_socketfd, buffer, BUFSIZE))
+    if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
         return;
 
     //Parse registration reply from server
@@ -103,34 +109,54 @@ static int handle_user_command()
 static inline void client_main_loop()
 {
      int bytes;
+     int ready_count, i;
      
      //Send messages to the host forever
     while(1)
     {
-        //Read from stdin and remove the newline character
-        bytes = getline(&buffer, &buffer_size, stdin);
-        if (buffer[bytes-1] == '\n') 
+        //Wait until epoll has detected some event in the registered fd's
+        ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
+        if(ready_count < 0)
         {
-            buffer[bytes-1] = '\0';
-            --bytes;
+            perror("epoll_wait failed!\n");
+            return;
         }
 
-        //Transmit the line read from stdin to the server
-        if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
-            return;
-
-
-        if(strcmp(buffer, "!close") == 0)
+        for(i=0; i<ready_count; i++)
         {
-            printf("Closing connection!\n");
-            break;
+            //When the administrator enters a command from stdin
+            if(events[i].data.fd == 0)
+            {
+                //Read from stdin and remove the newline character
+                bytes = getline(&buffer, &buffer_size, stdin);
+                if (buffer[bytes-1] == '\n') 
+                {
+                    buffer[bytes-1] = '\0';
+                    --bytes;
+                }
+
+                //Transmit the line read from stdin to the server
+                if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+                    return;
+
+
+                if(strcmp(buffer, "!close") == 0)
+                {
+                    printf("Closing connection!\n");
+                    break;
+                }
+            }
+            
+            //Message from Server
+            else
+            {                
+                //Anticipate a reply from the server
+                if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+                    return;
+
+                printf("%s\n", buffer);
+            }
         }
-
-        //Anticipate a reply from the server
-        if(!recv_msg(my_socketfd, buffer, BUFSIZE))
-            return;
-
-        printf("Server replied: %s\n", buffer);
     }
 
 }
@@ -141,10 +167,17 @@ void client(const char* ipaddr, const int port,  char *username)
 {
     int retval;
 
-    printf("Username: %s\n", username);
-
     buffer = calloc(BUFSIZE, sizeof(char));
     userName = username;
+    printf("Username: %s\n", username);
+
+    /*Setup epoll to allow multiplexed IO to serve multiple clients*/
+    epoll_fd = epoll_create1(0);
+    if(epoll_fd < 0)
+    {
+        perror("Failed to create epoll!\n");
+        return;
+    }
 
     //Create a TCP socket 
     my_socketfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -160,6 +193,7 @@ void client(const char* ipaddr, const int port,  char *username)
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = inet_addr(ipaddr);
 
+
     //Connect to the server
     if(connect(my_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
@@ -169,6 +203,17 @@ void client(const char* ipaddr, const int port,  char *username)
 
     //Register with the server
     register_with_server();
+
+    /*Register the server socket to the epoll list, and also mark it as nonblocking*/
+    fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
+    if(!register_fd_with_epoll(epoll_fd, my_socketfd))
+            return;   
+    
+    /*Register stdin (fd = 0) to the epoll list*/
+    if(!register_fd_with_epoll(epoll_fd, 0))
+        return; 
+
+
     client_main_loop();
    
     //Terminate the connection with the server

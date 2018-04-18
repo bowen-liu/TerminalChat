@@ -64,6 +64,30 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
 }
 
 
+/******************************/
+/*  Server Control Messages   */
+/******************************/
+
+static void parse_control_message()
+{
+    char cmd_username[USERNAME_LENG];
+
+    if(strncmp("!useroffline=", buffer, 13) == 0)
+    {
+        sscanf(buffer, "!useroffline=%s", cmd_username);
+        printf("User \"%s\" has disconnected.\n", cmd_username);
+    }
+
+    else if(strncmp("!useronline=", buffer, 12) == 0)
+    {
+        sscanf(buffer, "!useronline=%s", cmd_username);
+        printf("User \"%s\" has connected.\n", cmd_username);
+    }
+
+    else
+        printf("Received invalid control message \"%s\"\n", buffer);
+}
+
 
 /******************************/
 /*      Client Operations     */
@@ -154,7 +178,10 @@ static inline void client_main_loop()
                 if(!recv_msg(my_socketfd, buffer, BUFSIZE))
                     return;
 
-                printf("%s\n", buffer);
+                if(buffer[0] == '!')
+                    parse_control_message();
+                else
+                    printf("%s\n", buffer);
             }
         }
     }

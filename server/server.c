@@ -16,7 +16,8 @@ static char *buffer;
 static size_t buffer_size = BUFSIZE;
 
 //Keeping track of clients
-Client *active_clients = NULL;
+Client *active_clients = NULL;                  //Hashes client's FD to their descriptors
+Client *active_clients_names = NULL;            //Hashes each unique name to their corresponding descriptors
 Client *current_client; 
 unsigned int last_userid = 0;    
 
@@ -26,15 +27,23 @@ unsigned int last_userid = 0;
 /*          Helpers           */
 /******************************/                 
 
+static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
+
 static void disconnect_client(Client *c)
 {
+    char disconnect_msg[BUFSIZE];
+
+    sprintf(disconnect_msg, "!useroffline=%s", c->username);
+    printf("Disconnecting \"%s\"\n", c->username);
+    
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!\n");
     
     close(c->socketfd);
     HASH_DEL(active_clients, c);
     free(c);
-    
+ 
+    send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);
 }
 
 /******************************/
@@ -66,26 +75,27 @@ static unsigned int send_msg(Client *c, char* buffer, size_t size)
 }
 
 
-static unsigned int send_bcast(char* buffer, size_t size)
+static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
 {
     int count = 0;
     char bcast_msg[BUFSIZE];
     Client *curr, *temp;
 
-    sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
-
+    if(is_control_msg)
+        sprintf(bcast_msg, "%s", buffer);
+    else
+        sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
+    
     //Send the message in the buffer to every active client
     HASH_ITER(hh, active_clients, curr, temp)
     {
-        if(curr->socketfd == current_client->socketfd)
+        if(!include_current_client && curr->socketfd == current_client->socketfd)
             continue;
         
-        printf("Broadcasting to \"%s\"\n", curr->username);
         send_msg(curr, bcast_msg, strlen(bcast_msg)+1);
         ++count;
     }
     
-    printf("Broadcasted message to %d clients\n", count);
     return count;
 }
 
@@ -116,6 +126,45 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 /*      Client Operations     */
 /******************************/
 
+static inline int client_pm()
+{
+    char target_username[USERNAME_LENG+1];
+    Client *target;
+
+    char msg[MAX_MSG_LENG];
+    char *token;
+   
+    token = strtok(buffer, " ");
+    if(!token ||strlen(token) > USERNAME_LENG)
+    {
+        printf("Invalid username specified.\n");
+        return 0;
+    }
+
+    strncpy(target_username, &token[1], USERNAME_LENG);
+    printf("Target: %s\n", target_username);
+
+
+ 
+        
+    //Find if anyone with the requested username is online
+    /*HASH_FIND_STR(active_clients_names, target_username, target);
+    if(!target)
+    {
+        printf("User \"%s\" not found\n", target_username);
+        send_msg(current_client, "UserNotFound", 13);
+        return 0;
+    }
+
+    //Forward message to the target
+    sprintf(buffer, "%s (PM): %s\n", target_username, msg);
+    if(!send_msg(target->socketfd, buffer, strlen(buffer)+1))
+        return 0;
+    
+    */
+    return 1;
+}
+
 static inline int parse_client_command()
 {
     int bytes; 
@@ -123,12 +172,33 @@ static inline int parse_client_command()
     //If the client requested to close the connection
     if(strncmp(buffer, "!register", 9) == 0)
     {
-        sscanf(buffer, "!register:username=%s", current_client->username);  
+        
+        char username[32];
+        Client *result;
+
+        sscanf(buffer, "!register:username=%s", username);  
+        
+        /*//Verifies if the username is already in use
+        HASH_FIND_STR(active_clients_names, username, result);
+        if(result != NULL)
+        {
+            printf("Username already exists!\n");
+            return 0;
+        }
+
+        //Register the client's requested username
+        HASH_ADD_STR(active_clients_names, username, current_client);*/
+        
+        strcpy(current_client->username, username);
+
         printf("Registering user \"%s\" with userid %d\n", current_client->username, ++last_userid);
         sprintf(buffer, "!regreply:username=%s,userid=%u", current_client->username, last_userid);
-        
+
         if(!send_msg(current_client, buffer, strlen(buffer)+1))
             return 0;
+        
+        sprintf(buffer, "!useronline=%s", current_client->username);
+        send_bcast(buffer, strlen(buffer)+1, 1, 0);
     }
 
     else if(strcmp(buffer, "!close") == 0)
@@ -164,16 +234,20 @@ static inline int handle_client_msg()
     if(buffer[0] == '!')
         return parse_client_command();
 
+    //Direct messaging to another user/group
+    /*else if(buffer[0] == '@')
+        return client_pm();*/
+
     //Broadcast regular messages to all other active clients
     else
-        send_bcast(buffer, buffer_size);
+        send_bcast(buffer, buffer_size, 0, 1);
         
     return 1;
 }
 
 
 static inline int handle_new_connection()
-{
+{    
     Client *new_client = malloc(sizeof(Client));
     current_client = new_client;
     

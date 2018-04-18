@@ -16,9 +16,10 @@
 #include <fcntl.h>
 
 
-#define BUFSIZE 512
+#define BUFSIZE 1024
 #define USERNAME_LENG 32
-#define MAX_MSG_LENG (BUFSIZE - USERNAME_LENG - 32)         //Reserve 32 bytes for other extra chars appended     
+#define EXTRA_CHARS 48
+#define MAX_MSG_LENG (BUFSIZE - USERNAME_LENG - EXTRA_CHARS)         //Reserve some extra bytes for other extra chars appended by the server    
 
 void remove_newline(char *str);
 int register_fd_with_epoll(int epollfd, int socketfd);

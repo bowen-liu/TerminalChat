@@ -141,8 +141,9 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 }
 
 
+
 /******************************/
-/*      Client Operations     */
+/*  Client/Client Operations  */
 /******************************/
 
 static inline int client_pm()
@@ -151,22 +152,27 @@ static inline int client_pm()
     char msg[MAX_MSG_LENG];
     Username_Map *target;
 
-    char *token;
-   
-    token = strtok(buffer, " ");
-    if(!token ||strlen(token) > USERNAME_LENG)
+    int i;
+
+    printf("%s\n", buffer);
+
+    //Find the occurance of the first space
+    for(i=1; i<strlen(buffer); i++)
+        if(buffer[i] == ' ')
+            break;
+    
+    //No valid message found
+    if(i == strlen(buffer) || (i-1) > USERNAME_LENG)
     {
-        printf("Invalid username specified.\n");
+        printf("Invalid username specified, or no message specified\n");
         return 0;
     }
 
-    strncpy(target_username, &token[1], USERNAME_LENG);
-    strcpy(msg, &buffer[strlen(token)+1]);
-    printf("Target: \"%s\"\n", target_username);
-
-
- 
-        
+    //Seperate the target's name and message from the buffer
+    strncpy(target_username, &buffer[1], i-1);
+    target_username[i-1] = '\0';
+    strcpy(msg, &buffer[i+1]);
+  
     //Find if anyone with the requested username is online
     HASH_FIND_STR(active_clients_names, target_username, target);
     if(!target)
@@ -177,12 +183,23 @@ static inline int client_pm()
     }
 
     //Forward message to the target
-    sprintf(buffer, "%s (PM): %s", target_username, msg);
+    sprintf(buffer, "%s (PM): %s", current_client->username, msg);
     if(!send_msg(target->c, buffer, strlen(buffer)+1))
+        return 0;
+
+    //Echo back to the sender
+    sprintf(buffer, "%s (PM to %s): %s", current_client->username, target_username, msg);
+    if(!send_msg(current_client, buffer, strlen(buffer)+1))
         return 0;
     
     return 1;
 }
+
+
+
+/******************************/
+/*  Client/Server Operations  */
+/******************************/
 
 static inline int parse_client_command()
 {
@@ -245,7 +262,6 @@ static inline int handle_client_msg()
 {
     int bytes, retval;
     
-    getsockname(current_client->socketfd, (struct sockaddr*) &current_client->sockaddr, &current_client->sockaddr_leng);
     bytes = recv_msg(current_client, buffer, BUFSIZE);
     if(!bytes)
         return 0;

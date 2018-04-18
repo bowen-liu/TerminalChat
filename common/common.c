@@ -1,6 +1,13 @@
 #include "common.h"
 
 
+void remove_newline(char *str)
+{
+    int last = strlen(str)-1;
+
+    if(str[last] == '\n') 
+        str[last] = '\0';
+}
 
 int register_fd_with_epoll(int epoll_fd, int socketfd)
 {

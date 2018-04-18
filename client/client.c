@@ -15,7 +15,6 @@ static char *buffer;
 static size_t buffer_size = BUFSIZE;
 
 //User info
-static unsigned int userID;
 static char* userName;
 
 
@@ -112,8 +111,8 @@ static void register_with_server()
     if(!recv_msg(my_socketfd, buffer, BUFSIZE))
         return;
     
-    sscanf(buffer, "!regreply:username=%[^,],userid=%u", userName, &userID);
-    printf("Registered with server as \"%s\", userid: %u\n", userName, userID);
+    sscanf(buffer, "!regreply:username=%s", userName);
+    printf("Registered with server as \"%s\"\n", userName);
 }
 
 
@@ -153,11 +152,8 @@ static inline void client_main_loop()
             {
                 //Read from stdin and remove the newline character
                 bytes = getline(&buffer, &buffer_size, stdin);
-                if (buffer[bytes-1] == '\n') 
-                {
-                    buffer[bytes-1] = '\0';
-                    --bytes;
-                }
+                remove_newline(buffer);
+                --bytes;
 
                 //Transmit the line read from stdin to the server
                 if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))

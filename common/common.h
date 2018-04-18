@@ -20,6 +20,7 @@
 #define USERNAME_LENG 32
 #define MAX_MSG_LENG (BUFSIZE - USERNAME_LENG - 32)         //Reserve 32 bytes for other extra chars appended     
 
+void remove_newline(char *str);
 int register_fd_with_epoll(int epollfd, int socketfd);
 
 

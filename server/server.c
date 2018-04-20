@@ -119,6 +119,44 @@ static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, in
 }
 
 
+
+static void send_long_msg()
+{
+    int recv_page_size = 32;
+    int remaining_size = current_client->pending_size - current_client->pending_processed;
+
+    
+    int bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= recv_page_size)? recv_page_size:remaining_size, 0);
+
+    printf("Sent chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
+
+    if(bytes <= 0)
+    {
+        perror("Failed to send long message\n");
+        printf("Sent %zu\\%zu bytes to client \"%s\" before failure.\n", current_client->pending_processed, current_client->pending_size, current_client->username);
+        
+        free(current_client->pending_buffer);
+        current_client->pending_buffer = NULL;
+        current_client->pending_size = 0;
+        current_client->pending_processed = 0;
+
+        return;
+    }
+
+    current_client->pending_processed += bytes;
+    printf("Sent %zu\\%zu bytes to client \"%s\"\n", current_client->pending_processed, current_client->pending_size, current_client->username);
+    
+
+    if(current_client->pending_processed == current_client->pending_size)
+    {
+        free(current_client->pending_buffer);
+        current_client->pending_buffer = NULL;
+        current_client->pending_size = 0;
+        current_client->pending_processed = 0;
+    }
+}
+
+
 static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
     int bytes = recv(c->socketfd, buffer, BUFSIZE, 0);
@@ -247,6 +285,20 @@ static inline int parse_client_command()
         disconnect_client(current_client);
         return -1;
     }
+
+    else if(strcmp(buffer, "!userlist") == 0)
+    {
+        char testmsg[101] = "1111111111222222222233333333334444444444555555555566666666667777777777888888888899999999990000000000";
+        
+        current_client->pending_size = 126;
+        current_client->pending_buffer = malloc(current_client->pending_size);
+
+        sprintf(current_client->pending_buffer, "!longmsg=126 !userlist=1,%s", testmsg);
+
+        send_long_msg();
+        return 1;
+    }
+
     else
     {
         printf("Invalid command \"%s\"\n", buffer);
@@ -287,7 +339,7 @@ static inline int handle_client_msg()
 
 static inline int handle_new_connection()
 {    
-    Client *new_client = malloc(sizeof(Client));
+    Client *new_client = calloc(1, sizeof(Client));
     current_client = new_client;
     
     new_client->username[0] = '\0';                             //Empty username indicates an unregistered connection
@@ -306,9 +358,10 @@ static inline int handle_new_connection()
     HASH_ADD_INT(active_clients, socketfd, new_client);
 
 
-    //Register the new client's FD into epoll's event list, and mark it as nonblocking
+    //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd))
+    //if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET))
+    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, EPOLLIN | EPOLLOUT | EPOLLRDHUP))
         return 0;    
 
     //Send a greeting to the client
@@ -377,7 +430,25 @@ static inline void server_main_loop()
             else
             {                
                 HASH_FIND_INT(active_clients, &events[i].data.fd, current_client);
-                handle_client_msg();
+
+                //Handle EPOLLRDHUP: the client has closed its connection unexpectedly
+                if(events[i].events & EPOLLRDHUP)
+                {
+                    printf("Client \"%s\" has closed its connection.\n", current_client->username);
+                    disconnect_client(current_client);
+                    continue;
+                }
+                
+                //Handles EPOLLIN (ready for reading)
+                else if(events[i].events & EPOLLIN)
+                    handle_client_msg();
+
+                //Handle EPOLLOUT (ready for writing) if the client has pending long messages
+                else if(events[i].events & EPOLLOUT)
+                {
+                    if(current_client->pending_size > 0)
+                        send_long_msg();
+                }
             }
                 
         }
@@ -423,11 +494,11 @@ void server(const char* ipaddr, const int port)
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, server_socketfd))
+    if(!register_fd_with_epoll(epoll_fd, server_socketfd, EPOLLIN))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(epoll_fd, 0))
+    if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))
         return;   
 
     /*Begin listening for incoming connections on the server socket*/

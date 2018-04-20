@@ -7,11 +7,21 @@
 
 //Abstracts each active client participating in the server
 typedef struct {
+    
+    /*Connection info*/
     int socketfd;                        //Key used for the main active client hash table
     struct sockaddr_in sockaddr;
     int sockaddr_leng;
 
+    /*Userinfo*/
     char username[USERNAME_LENG];
+
+    /*Other data*/
+    char* pending_buffer;
+    size_t pending_size;
+    size_t pending_processed;
+
+
     UT_hash_handle hh;
 } Client;
 

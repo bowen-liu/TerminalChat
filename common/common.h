@@ -22,7 +22,7 @@
 #define MAX_MSG_LENG (BUFSIZE - USERNAME_LENG - EXTRA_CHARS)         //Reserve some extra bytes for other extra chars appended by the server    
 
 void remove_newline(char *str);
-int register_fd_with_epoll(int epollfd, int socketfd);
+int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 
 
 #endif

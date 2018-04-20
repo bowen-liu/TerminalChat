@@ -13,6 +13,12 @@ static int epoll_fd;
 //Receive buffers
 static char *buffer;
 static size_t buffer_size = BUFSIZE;
+static size_t last_received;
+
+static int pending_long_msg = 0;
+static char *long_buffer;
+static size_t expected_long_size;
+static size_t received_long;
 
 //User info
 static char* userName;
@@ -62,12 +68,80 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
     return bytes;
 }
 
+/******************************/
+/*     Long Send/Receive     */
+/******************************/
+
+static void parse_control_message(char* buffer);
+static void recv_long_msg()
+{
+    int recv_page_size = 32;
+    int bytes;
+
+    if(!pending_long_msg)
+    {
+        pending_long_msg = 1;
+        received_long = last_received;
+        long_buffer = malloc(expected_long_size);
+        memcpy(long_buffer, buffer, last_received);
+
+        printf("Initial chunk (%d): %.*s\n", received_long, received_long, long_buffer);
+        return;
+    }
+
+    bytes = recv(my_socketfd, &long_buffer[received_long], recv_page_size, 0);
+
+    if(bytes <= 0)
+    {
+        perror("Failed to receive long message from server.\n");
+        printf("%zu\\%zu bytes received before failure.\n", received_long, expected_long_size);
+        
+        pending_long_msg = 0;
+        expected_long_size = 0;
+        received_long = 0;
+        free(long_buffer);
+        long_buffer = NULL;
+
+        return;
+    }
+
+    printf("Received chunk (%d): %.*s\n", bytes, bytes, &long_buffer[received_long-1]);
+    printf("Current Buffer: %.*s\n", received_long, long_buffer);
+
+    received_long += bytes;
+    printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
+    
+
+    //The entire message has been received
+    if(expected_long_size == received_long)
+    {
+        int i;
+
+        printf("Completed long recv\n");
+
+        //Start at the end of "!longmsg=" to find the first space
+        for(i=10; i<expected_long_size; i++)        
+        {
+            if(long_buffer[i] == ' ')
+                break;
+        }
+        
+        parse_control_message(&long_buffer[i+1]);
+
+        pending_long_msg = 0;
+        expected_long_size = 0;
+        received_long = 0;
+        free(long_buffer);
+        long_buffer = NULL;
+    }
+}
+
 
 /******************************/
 /*  Server Control Messages   */
 /******************************/
 
-static void parse_control_message()
+static void parse_control_message(char* buffer)
 {
     char cmd_username[USERNAME_LENG];
 
@@ -82,6 +156,14 @@ static void parse_control_message()
         sscanf(buffer, "!useronline=%s", cmd_username);
         printf("User \"%s\" has connected.\n", cmd_username);
     }
+
+    else if(strncmp("!longmsg=", buffer, 9) == 0)
+    {   
+        sscanf(buffer, "!longmsg=%zu ", &expected_long_size);
+        printf("Expecting a long message from the server, size: %zu\n", expected_long_size);
+        recv_long_msg();
+    }
+    
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);
@@ -170,12 +252,20 @@ static inline void client_main_loop()
             //Message from Server
             else
             {                
-                //Anticipate a reply from the server
-                if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+                //Return to receiving a long message if it's still pending
+                if(pending_long_msg == 1)
+                {
+                    recv_long_msg();
+                    continue;
+                }
+                
+                //Otherwise, receive a regular new message from the server
+                last_received = recv_msg(my_socketfd, buffer, BUFSIZE);
+                if(!last_received)
                     return;
 
                 if(buffer[0] == '!')
-                    parse_control_message();
+                    parse_control_message(buffer);
                 else
                     printf("%s\n", buffer);
             }
@@ -229,11 +319,11 @@ void client(const char* ipaddr, const int port,  char *username)
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, my_socketfd))
+    if(!register_fd_with_epoll(epoll_fd, my_socketfd, EPOLLIN))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(epoll_fd, 0))
+    if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))
         return; 
 
 

@@ -9,10 +9,9 @@ void remove_newline(char *str)
         str[last] = '\0';
 }
 
-int register_fd_with_epoll(int epoll_fd, int socketfd)
+int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags)
 {
     struct epoll_event new_event;
-    const int event_flags = EPOLLIN;
     
     new_event.events = event_flags;
     new_event.data.fd = socketfd;

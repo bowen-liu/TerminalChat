@@ -166,27 +166,36 @@ static void parse_control_message(char* buffer)
 /*      Client Operations     */
 /******************************/
 
-static void register_with_server()
+static int register_with_server()
 {
     int bytes;
     
     //Receive a greeting message from the server
     if(!recv_msg(my_socketfd, buffer, BUFSIZE))
-        return;
+        return 0;
     printf("%s\n", buffer);
 
     //Register my desired username
     printf("Registering username \"%s\"...\n", userName);
     sprintf(buffer, "!register:username=%s", userName);
     if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
-        return;
+        return 0;
 
     //Parse registration reply from server
     if(!recv_msg(my_socketfd, buffer, BUFSIZE))
-        return;
-    
-    sscanf(buffer, "!regreply:username=%s", userName);
-    printf("Registered with server as \"%s\"\n", userName);
+        return 0;
+
+    //Did we receive an anticipated !regreply?
+    if(strncmp(buffer, "!regreply:username=", 19) == 0)
+    {
+        sscanf(&buffer[19], "%s", userName);
+        printf("Registered with server as \"%s\"\n", userName);
+        return 1;
+    }
+
+    //Something went wrong and server doesn't want me to join :(
+    printf("Server rejected registration: \"%s\"\n", buffer);
+    return 0;
 }
 
 
@@ -316,7 +325,8 @@ void client(const char* ipaddr, const int port,  char *username)
     }
 
     //Register with the server
-    register_with_server();
+    if(!register_with_server())
+        return;
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);

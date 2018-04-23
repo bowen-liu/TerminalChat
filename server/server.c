@@ -241,17 +241,56 @@ static inline int parse_client_command()
     //If the client requested to close the connection
     if(strncmp(buffer, "!register", 9) == 0)
     {  
-        char username[32];
+        char *username = malloc(USERNAME_LENG);
         Username_Map *result;
 
-        sscanf(buffer, "!register:username=%s", username);  
-        
-        //Verifies if the username is already in use
-        HASH_FIND_STR(active_clients_names, username, result);
-        if(result != NULL)
-        {
-            printf("Username already exists!\n");
+        char *new_username;
+        int duplicates = 0, max_duplicates_allowed;
+
+        sscanf(buffer, "!register:username=%s", username);
+        if(!username_is_valid(username))
             return 0;
+        
+        //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
+        HASH_FIND_STR(active_clients_names, username, result);
+        while(result != NULL)
+        {
+            if(duplicates == 0)
+            {
+                new_username = malloc(USERNAME_LENG);
+
+                //How many reminaing free bytes in the username can be used for appending numbers?
+                max_duplicates_allowed = USERNAME_LENG - strlen(username) - 1;
+
+                //Determine the largest numerical value (up to 999) can be used from the free bytes
+                if(max_duplicates_allowed > 3)
+                    max_duplicates_allowed = 999;
+                else if(max_duplicates_allowed == 2)
+                    max_duplicates_allowed = 99;
+                else if(max_duplicates_allowed == 1)
+                    max_duplicates_allowed = 9;
+                else
+                    max_duplicates_allowed = 0;
+            }
+
+            if(++duplicates > max_duplicates_allowed)
+            {
+                printf("The username \"%s\" cannot support further clients.\n", username);
+                send_msg(current_client, "InvalidUsername", 16);
+                disconnect_client(current_client);
+                return 0;
+            }
+
+            //Test if the new name with a newly appended value is used
+            sprintf(new_username, "%s_%d", username, duplicates);
+            HASH_FIND_STR(active_clients_names, new_username, result);
+        }
+
+        if(duplicates)
+        {
+            printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, new_username);
+            free(username);
+            username = new_username;
         }
 
         //Register the client's requested username
@@ -261,7 +300,6 @@ static inline int parse_client_command()
         result->c = current_client;
         HASH_ADD_STR(active_clients_names, username, result);
 
-
         printf("Registering user \"%s\"\n", current_client->username);
         sprintf(buffer, "!regreply:username=%s", current_client->username);
 
@@ -270,8 +308,9 @@ static inline int parse_client_command()
         
         sprintf(buffer, "!useronline=%s", current_client->username);
         send_bcast(buffer, strlen(buffer)+1, 1, 0);
-
         ++total_users;
+
+        free(username);
     }
 
     else if(strcmp(buffer, "!close") == 0)

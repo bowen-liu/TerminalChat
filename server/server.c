@@ -7,8 +7,7 @@
 static int server_socketfd;
 static struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
 
-//epoll event structures for handling multiple clients 
-static struct epoll_event events[MAX_EPOLL_EVENTS];
+//epoll FD for handling multiple clients 
 static int epoll_fd;  
 
 //Receive buffers
@@ -124,36 +123,39 @@ static void send_long_msg()
 {
     int recv_page_size = 32;
     int remaining_size = current_client->pending_size - current_client->pending_processed;
+    int bytes;
 
-    
-    int bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= recv_page_size)? recv_page_size:remaining_size, 0);
+    //Start of a new long send. Register the client's FD to signal on EPOLLOUT
+    if(current_client->pending_processed == 0)
+        update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
+     
+    //Send the next chunk to the client
+    bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= recv_page_size)? recv_page_size:remaining_size, 0);
+    printf("Sending chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
 
-    printf("Sent chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
-
+    //Check exit conditions
     if(bytes <= 0)
     {
         perror("Failed to send long message\n");
         printf("Sent %zu\\%zu bytes to client \"%s\" before failure.\n", current_client->pending_processed, current_client->pending_size, current_client->username);
-        
-        free(current_client->pending_buffer);
-        current_client->pending_buffer = NULL;
-        current_client->pending_size = 0;
-        current_client->pending_processed = 0;
-
-        return;
     }
-
-    current_client->pending_processed += bytes;
-    printf("Sent %zu\\%zu bytes to client \"%s\"\n", current_client->pending_processed, current_client->pending_size, current_client->username);
-    
-
-    if(current_client->pending_processed == current_client->pending_size)
+    else
     {
-        free(current_client->pending_buffer);
-        current_client->pending_buffer = NULL;
-        current_client->pending_size = 0;
-        current_client->pending_processed = 0;
+        current_client->pending_processed += bytes;
+        printf("Sent %zu\\%zu bytes to client \"%s\"\n", current_client->pending_processed, current_client->pending_size, current_client->username);
+
+        if(current_client->pending_processed < current_client->pending_size)
+            return;
     }
+
+    //Cleanup resources once long sent has completed/failed
+    free(current_client->pending_buffer);
+    current_client->pending_buffer = NULL;
+    current_client->pending_size = 0;
+    current_client->pending_processed = 0;
+
+    //Remove the EPOLLOUT notification once long send has completed
+    update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
 }
 
 
@@ -360,8 +362,7 @@ static inline int handle_new_connection()
 
     //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
-    //if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLET))
-    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, EPOLLIN | EPOLLOUT | EPOLLRDHUP))
+    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
         return 0;    
 
     //Send a greeting to the client
@@ -399,6 +400,7 @@ static inline int handle_stdin()
 
 static inline void server_main_loop()
 {
+    struct epoll_event events[MAX_EPOLL_EVENTS];
     int ready_count, i;
     
     while(1)

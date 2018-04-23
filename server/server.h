@@ -35,4 +35,6 @@ typedef struct {
 } Username_Map;
 
 
+#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLIN | EPOLLRDHUP)
+
 #endif

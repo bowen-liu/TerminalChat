@@ -76,8 +76,10 @@ static void parse_control_message(char* buffer);
 static void recv_long_msg()
 {
     int recv_page_size = 32;
-    int bytes;
+    int bytes, i;
+    char* longcmd;
 
+    //Start of a new long recv operation
     if(!pending_long_msg)
     {
         pending_long_msg = 1;
@@ -85,55 +87,42 @@ static void recv_long_msg()
         long_buffer = malloc(expected_long_size);
         memcpy(long_buffer, buffer, last_received);
 
-        printf("Initial chunk (%d): %.*s\n", received_long, received_long, long_buffer);
+        printf("Initial chunk (%zu): %.*s\n", received_long, (int)received_long, long_buffer);
         return;
     }
 
     bytes = recv(my_socketfd, &long_buffer[received_long], recv_page_size, 0);
 
+    //Check exit conditions
     if(bytes <= 0)
     {
         perror("Failed to receive long message from server.\n");
         printf("%zu\\%zu bytes received before failure.\n", received_long, expected_long_size);
-        
-        pending_long_msg = 0;
-        expected_long_size = 0;
-        received_long = 0;
-        free(long_buffer);
-        long_buffer = NULL;
-
-        return;
     }
-
-    printf("Received chunk (%d): %.*s\n", bytes, bytes, &long_buffer[received_long-1]);
-    printf("Current Buffer: %.*s\n", received_long, long_buffer);
-
-    received_long += bytes;
-    printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
-    
-
-    //The entire message has been received
-    if(expected_long_size == received_long)
+    else
     {
-        int i;
+        printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, &long_buffer[received_long-1]);
+        printf("Current Buffer: %.*s\n", (int)received_long, long_buffer);
 
+        received_long += bytes;
+        printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
+
+        //Has the entire message been received?
+        if(expected_long_size < received_long)
+            return;
         printf("Completed long recv\n");
 
-        //Start at the end of "!longmsg=" to find the first space
-        for(i=10; i<expected_long_size; i++)        
-        {
-            if(long_buffer[i] == ' ')
-                break;
-        }
-        
-        parse_control_message(&long_buffer[i+1]);
-
-        pending_long_msg = 0;
-        expected_long_size = 0;
-        received_long = 0;
-        free(long_buffer);
-        long_buffer = NULL;
+        //Extract the long command after the !longmsg header
+        longcmd = strchr(long_buffer, ' ');
+        parse_control_message(&longcmd[1]);
     }
+
+    //Free resources used for the long recv
+    free(long_buffer);
+    pending_long_msg = 0;
+    expected_long_size = 0;
+    received_long = 0;
+    long_buffer = NULL;
 }
 
 
@@ -213,12 +202,14 @@ static int handle_user_command()
 
 static inline void client_main_loop()
 {
-     int bytes;
+     struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
+     int bytes;
      
      //Send messages to the host forever
     while(1)
     {
+        
         //Wait until epoll has detected some event in the registered fd's
         ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
         if(ready_count < 0)
@@ -229,7 +220,7 @@ static inline void client_main_loop()
 
         for(i=0; i<ready_count; i++)
         {
-            //When the administrator enters a command from stdin
+            //When the user enters a message from stdin
             if(events[i].data.fd == 0)
             {
                 //Read from stdin and remove the newline character
@@ -237,10 +228,13 @@ static inline void client_main_loop()
                 remove_newline(buffer);
                 --bytes;
 
+                //Do not transmit empty messages
+                if(strlen(buffer) < 1 || buffer[0] == '\n')
+                    continue;
+
                 //Transmit the line read from stdin to the server
                 if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
                     return;
-
 
                 if(strcmp(buffer, "!close") == 0)
                 {
@@ -251,7 +245,7 @@ static inline void client_main_loop()
             
             //Message from Server
             else
-            {                
+            {            
                 //Return to receiving a long message if it's still pending
                 if(pending_long_msg == 1)
                 {
@@ -280,9 +274,13 @@ void client(const char* ipaddr, const int port,  char *username)
 {
     int retval;
 
+    if(!username_is_valid(username))
+        return;
+    
     buffer = calloc(BUFSIZE, sizeof(char));
     userName = username;
     printf("Username: %s\n", username);
+
 
     /*Setup epoll to allow multiplexed IO to serve multiple clients*/
     epoll_fd = epoll_create1(0);

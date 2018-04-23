@@ -114,7 +114,10 @@ static void recv_long_msg()
 
         //Extract the long command after the !longmsg header
         longcmd = strchr(long_buffer, ' ');
-        parse_control_message(&longcmd[1]);
+        if(longcmd)
+            parse_control_message(&longcmd[1]);
+        else
+            printf("Long message is malformed or does not contain a further control message\n");
     }
 
     //Free resources used for the long recv

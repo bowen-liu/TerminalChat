@@ -188,31 +188,24 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 
 static inline int client_pm()
 {
-    char target_username[USERNAME_LENG+1];
-    char msg[MAX_MSG_LENG];
+    char *target_username;
+    char *target_msg;
+    char pmsg[MAX_MSG_LENG];
     Username_Map *target;
 
-    int i;
-
-    printf("%s\n", buffer);
-
     //Find the occurance of the first space
-    for(i=1; i<strlen(buffer); i++)
-        if(buffer[i] == ' ')
-            break;
-    
-    //No valid message found
-    if(i == strlen(buffer) || (i-1) > USERNAME_LENG)
+    target_msg = strchr(buffer, ' ');
+    if(!target_msg)
     {
         printf("Invalid username specified, or no message specified\n");
         return 0;
     }
 
     //Seperate the target's name and message from the buffer
-    strncpy(target_username, &buffer[1], i-1);
-    target_username[i-1] = '\0';
-    strcpy(msg, &buffer[i+1]);
-  
+    target_username = &buffer[1];
+    target_msg[0] = '\0';              //Mark the space separating the username and message as NULL, so we can directly read the username from the pointer
+    target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
+
     //Find if anyone with the requested username is online
     HASH_FIND_STR(active_clients_names, target_username, target);
     if(!target)
@@ -223,13 +216,13 @@ static inline int client_pm()
     }
 
     //Forward message to the target
-    sprintf(buffer, "%s (PM): %s", current_client->username, msg);
-    if(!send_msg(target->c, buffer, strlen(buffer)+1))
+    sprintf(pmsg, "%s (PM): %s", current_client->username, target_msg);
+    if(!send_msg(target->c, pmsg, strlen(pmsg)+1))
         return 0;
 
     //Echo back to the sender
-    sprintf(buffer, "%s (PM to %s): %s", current_client->username, target_username, msg);
-    if(!send_msg(current_client, buffer, strlen(buffer)+1))
+    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, target_username, target_msg);
+    if(!send_msg(current_client, pmsg, strlen(pmsg)+1))
         return 0;
     
     return 1;

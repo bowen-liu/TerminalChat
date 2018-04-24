@@ -121,7 +121,6 @@ static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, in
 
 static void send_long_msg()
 {
-    int recv_page_size = 32;
     int remaining_size = current_client->pending_size - current_client->pending_processed;
     int bytes;
 
@@ -130,7 +129,7 @@ static void send_long_msg()
         update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
      
     //Send the next chunk to the client
-    bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= recv_page_size)? recv_page_size:remaining_size, 0);
+    bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size, 0);
     printf("Sending chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
 
     //Check exit conditions
@@ -159,6 +158,35 @@ static void send_long_msg()
 }
 
 
+static void send_new_long_msg(char* buffer, size_t size)
+{
+    char* newbuffer;
+    size_t header_size;
+
+    //if(size < BUFSIZE)
+    if(size < LONG_RECV_PAGE_SIZE)
+    {
+        send_msg(current_client, buffer, size);
+        return;
+    }
+
+    newbuffer = malloc(size + 48);
+
+    //Add the longmsg header and total message size before the message
+    sprintf(newbuffer, "!longmsg=%zu ", size);
+    header_size = strlen(newbuffer);
+    strcat(newbuffer, buffer);
+
+    printf("New Long Message (h: %zu m: %zu): \"%s\"\n", header_size, size, newbuffer);
+
+    //Start the operation
+    current_client->pending_buffer = newbuffer;
+    current_client->pending_size = size + header_size;
+    current_client->pending_processed = 0;
+    send_long_msg();
+}
+
+
 static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
     int bytes = recv(c->socketfd, buffer, BUFSIZE, 0);
@@ -183,7 +211,7 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 
 
 /******************************/
-/*  Client/Client Operations  */
+/*      Client Operations    */
 /******************************/
 
 static inline int client_pm()
@@ -228,11 +256,110 @@ static inline int client_pm()
     return 1;
 }
 
+static inline int register_client()
+{
+    char *username = malloc(USERNAME_LENG+1);
+    Username_Map *result;
+
+    char *new_username;
+    int duplicates = 0, max_duplicates_allowed;
+
+    sscanf(buffer, "!register:username=%s", username);
+    if(!username_is_valid(username))
+        return 0;
+    
+    //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
+    HASH_FIND_STR(active_clients_names, username, result);
+    while(result != NULL)
+    {
+        if(duplicates == 0)
+        {
+            new_username = malloc(USERNAME_LENG+1);
+
+            //How many reminaing free bytes in the username can be used for appending numbers?
+            max_duplicates_allowed = USERNAME_LENG - strlen(username) - 1;
+
+            //Determine the largest numerical value (up to 999) can be used from the free bytes
+            if(max_duplicates_allowed > 3)
+                max_duplicates_allowed = 999;
+            else if(max_duplicates_allowed == 2)
+                max_duplicates_allowed = 99;
+            else if(max_duplicates_allowed == 1)
+                max_duplicates_allowed = 9;
+            else
+                max_duplicates_allowed = 0;
+        }
+
+        if(++duplicates > max_duplicates_allowed)
+        {
+            printf("The username \"%s\" cannot support further clients.\n", username);
+            send_msg(current_client, "InvalidUsername", 16);
+            disconnect_client(current_client);
+            return 0;
+        }
+
+        //Test if the new name with a newly appended value is used
+        sprintf(new_username, "%s_%d", username, duplicates);
+        HASH_FIND_STR(active_clients_names, new_username, result);
+    }
+
+    if(duplicates)
+    {
+        printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, new_username);
+        free(username);
+        username = new_username;
+    }
+
+    //Register the client's requested username
+    result = malloc(sizeof(Username_Map));
+    result->c = current_client;
+    strcpy(current_client->username, username);
+    strcpy(result->username, username);
+    HASH_ADD_STR(active_clients_names, username, result);
+    free(username);
+
+    printf("Registering user \"%s\"\n", current_client->username);
+    sprintf(buffer, "!regreply:username=%s", current_client->username);
+
+    if(!send_msg(current_client, buffer, strlen(buffer)+1))
+        return 0;
+    
+    sprintf(buffer, "!useronline=%s", current_client->username);
+    send_bcast(buffer, strlen(buffer)+1, 1, 0);
+    ++total_users;
+    
+    return 1;
+}
 
 
-/******************************/
-/*  Client/Server Operations  */
-/******************************/
+static inline int userlist()
+{
+    char* userlist_msg = malloc(HASH_COUNT(active_clients_names) * (USERNAME_LENG+1) + EXTRA_CHARS);
+    size_t userlist_size = 0;
+    Username_Map *curr, *temp;
+
+    //Add command header to the beginning of the buffer
+    sprintf(userlist_msg, "!userlist=%d", total_users);
+    userlist_size = strlen(userlist_msg);
+
+    //Iterate through the list of active usernames and append them to the buffer one at a time
+    HASH_ITER(hh, active_clients_names, curr, temp)
+    {
+        strcat(userlist_msg, ",");
+        strcat(userlist_msg, curr->username);
+        userlist_size += strlen(curr->username) + 1;
+    }
+    userlist_msg[userlist_size] = '\0';
+    ++userlist_size;
+    
+    printf("(size: %zu, strlen: %zu)\"%s\"\n", userlist_size, strlen(userlist_msg), userlist_msg);
+    
+    send_new_long_msg(userlist_msg, userlist_size);
+    free(userlist_msg);
+
+    return 1;
+}
+
 
 static inline int parse_client_command()
 {
@@ -241,76 +368,7 @@ static inline int parse_client_command()
     //If the client requested to close the connection
     if(strncmp(buffer, "!register", 9) == 0)
     {  
-        char *username = malloc(USERNAME_LENG);
-        Username_Map *result;
-
-        char *new_username;
-        int duplicates = 0, max_duplicates_allowed;
-
-        sscanf(buffer, "!register:username=%s", username);
-        if(!username_is_valid(username))
-            return 0;
-        
-        //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
-        HASH_FIND_STR(active_clients_names, username, result);
-        while(result != NULL)
-        {
-            if(duplicates == 0)
-            {
-                new_username = malloc(USERNAME_LENG);
-
-                //How many reminaing free bytes in the username can be used for appending numbers?
-                max_duplicates_allowed = USERNAME_LENG - strlen(username) - 1;
-
-                //Determine the largest numerical value (up to 999) can be used from the free bytes
-                if(max_duplicates_allowed > 3)
-                    max_duplicates_allowed = 999;
-                else if(max_duplicates_allowed == 2)
-                    max_duplicates_allowed = 99;
-                else if(max_duplicates_allowed == 1)
-                    max_duplicates_allowed = 9;
-                else
-                    max_duplicates_allowed = 0;
-            }
-
-            if(++duplicates > max_duplicates_allowed)
-            {
-                printf("The username \"%s\" cannot support further clients.\n", username);
-                send_msg(current_client, "InvalidUsername", 16);
-                disconnect_client(current_client);
-                return 0;
-            }
-
-            //Test if the new name with a newly appended value is used
-            sprintf(new_username, "%s_%d", username, duplicates);
-            HASH_FIND_STR(active_clients_names, new_username, result);
-        }
-
-        if(duplicates)
-        {
-            printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, new_username);
-            free(username);
-            username = new_username;
-        }
-
-        //Register the client's requested username
-        result = malloc(sizeof(Username_Map));
-        strcpy(current_client->username, username);
-        strcpy(result->username, username);
-        result->c = current_client;
-        HASH_ADD_STR(active_clients_names, username, result);
-
-        printf("Registering user \"%s\"\n", current_client->username);
-        sprintf(buffer, "!regreply:username=%s", current_client->username);
-
-        if(!send_msg(current_client, buffer, strlen(buffer)+1))
-            return 0;
-        
-        sprintf(buffer, "!useronline=%s", current_client->username);
-        send_bcast(buffer, strlen(buffer)+1, 1, 0);
-        ++total_users;
-
-        free(username);
+        return register_client();
     }
 
     else if(strcmp(buffer, "!close") == 0)
@@ -322,14 +380,15 @@ static inline int parse_client_command()
 
     else if(strcmp(buffer, "!userlist") == 0)
     {
+        return userlist();
+    }
+
+    else if(strcmp(buffer, "!testlong") == 0)
+    {
         char testmsg[101] = "1111111111222222222233333333334444444444555555555566666666667777777777888888888899999999990000000000";
+        size_t testmsg_size = strlen(testmsg)+1;
         
-        current_client->pending_size = 126;
-        current_client->pending_buffer = malloc(current_client->pending_size);
-
-        sprintf(current_client->pending_buffer, "!longmsg=126 !userlist=1,%s", testmsg);
-
-        send_long_msg();
+        send_new_long_msg(testmsg, testmsg_size);
         return 1;
     }
 
@@ -342,6 +401,11 @@ static inline int parse_client_command()
         
     return 1;
 }
+
+
+/******************************/
+/*    Serverside Operations   */
+/******************************/
 
 
 static inline int handle_client_msg()
@@ -390,7 +454,6 @@ static inline int handle_new_connection()
 
     //Add the client into active_clients, and use its socketfd as the key.
     HASH_ADD_INT(active_clients, socketfd, new_client);
-
 
     //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);

@@ -1,9 +1,7 @@
 #ifndef _SERVER_H_
 #define _SERVER_H_
 
-#include "../common/common.h"
-#include "../library/uthash/uthash.h"                //http://troydhanson.github.io/uthash/       
-
+#include "../common/common.h"     
 
 //Abstracts each active client participating in the server
 typedef struct {
@@ -14,7 +12,7 @@ typedef struct {
     int sockaddr_leng;
 
     /*Userinfo*/
-    char username[USERNAME_LENG];
+    char username[USERNAME_LENG+1];
 
     /*Other data*/
     char* pending_buffer;
@@ -28,7 +26,7 @@ typedef struct {
 
 //Maps a username to a client object
 typedef struct {
-    char username[USERNAME_LENG];
+    char username[USERNAME_LENG+1];
     Client *c;
     
     UT_hash_handle hh;

@@ -4,6 +4,14 @@
 #include "../common/common.h"
 
 
+typedef struct {
+    
+    char username[USERNAME_LENG+1];
+    UT_hash_handle hh;
+
+} Member;
+
+
 
 
 #endif

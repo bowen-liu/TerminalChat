@@ -23,6 +23,10 @@ static size_t received_long;
 //User info
 static char* userName;
 
+//Other clients
+Member *online_members = NULL;
+unsigned int users_online = 0;
+
 
 /******************************/
 /*     Basic Send/Receive     */
@@ -75,13 +79,19 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
 static void parse_control_message(char* buffer);
 static void recv_long_msg()
 {
-    int recv_page_size = 32;
     int bytes, i;
-    char* longcmd;
+    char header[48];
+    char *longcmd;
 
     //Start of a new long recv operation
     if(!pending_long_msg)
     {
+        sscanf(buffer, "%s ", header);
+        sscanf(header, "!longmsg=%zu", &expected_long_size);
+        expected_long_size += strlen(header) + 1;
+        
+        printf("Expecting a long message from the server, size: %zu\n", expected_long_size);
+        
         pending_long_msg = 1;
         received_long = last_received;
         long_buffer = malloc(expected_long_size);
@@ -91,7 +101,7 @@ static void recv_long_msg()
         return;
     }
 
-    bytes = recv(my_socketfd, &long_buffer[received_long], recv_page_size, 0);
+    bytes = recv(my_socketfd, &long_buffer[received_long], LONG_RECV_PAGE_SIZE, 0);
 
     //Check exit conditions
     if(bytes <= 0)
@@ -108,7 +118,7 @@ static void recv_long_msg()
         printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
 
         //Has the entire message been received?
-        if(expected_long_size < received_long)
+        if(received_long < expected_long_size)
             return;
         printf("Completed long recv\n");
 
@@ -128,38 +138,6 @@ static void recv_long_msg()
     long_buffer = NULL;
 }
 
-
-/******************************/
-/*  Server Control Messages   */
-/******************************/
-
-static void parse_control_message(char* buffer)
-{
-    char cmd_username[USERNAME_LENG];
-
-    if(strncmp("!useroffline=", buffer, 13) == 0)
-    {
-        sscanf(buffer, "!useroffline=%s", cmd_username);
-        printf("User \"%s\" has disconnected.\n", cmd_username);
-    }
-
-    else if(strncmp("!useronline=", buffer, 12) == 0)
-    {
-        sscanf(buffer, "!useronline=%s", cmd_username);
-        printf("User \"%s\" has connected.\n", cmd_username);
-    }
-
-    else if(strncmp("!longmsg=", buffer, 9) == 0)
-    {   
-        sscanf(buffer, "!longmsg=%zu ", &expected_long_size);
-        printf("Expecting a long message from the server, size: %zu\n", expected_long_size);
-        recv_long_msg();
-    }
-    
-
-    else
-        printf("Received invalid control message \"%s\"\n", buffer);
-}
 
 
 /******************************/
@@ -199,6 +177,43 @@ static int register_with_server()
 }
 
 
+static void parse_userlist()
+{
+    char* newbuffer = buffer;
+    char* token;
+    Member *curr, *tmp;
+
+    //Delete the old hash table if it already exists
+    if(online_members)
+    {
+        HASH_ITER(hh, online_members, curr, tmp) 
+        {
+            HASH_DEL(online_members, curr);
+            free(curr);
+        }
+    }
+
+    //Parse the header
+    token = strtok(newbuffer, ",");
+    if(!token)
+        return;
+    sscanf(token, "!userlist=%u", &users_online);
+    printf("%u users are currently online:\n", users_online);
+
+    //Extract each user's name
+    token = strtok(NULL, ",");
+    while(token)
+    {
+        printf("%s\n", token);
+        curr = malloc(sizeof(Member));
+        strcpy(curr->username, token);
+        HASH_ADD_STR(online_members, username, curr);
+        
+        token = strtok(NULL, ",");
+    }
+}
+
+
 static int handle_user_command()
 {
     //Todo: escape commands like "!register"
@@ -206,6 +221,57 @@ static int handle_user_command()
     return 1;
 }
 
+
+/******************************/
+/*  Server Control Messages   */
+/******************************/
+
+static void useroffline()
+{
+    char target_username[USERNAME_LENG+1];
+    Member *member;
+
+    sscanf(buffer, "!useroffline=%s", target_username);
+    printf("User \"%s\" has disconnected.\n", target_username);
+
+    HASH_FIND_STR(online_members, target_username, member);
+    if(!member)
+    {
+        printf("Could not find \"%s\" in the online list!\n", target_username);
+        return;
+    }
+    HASH_DEL(online_members, member);
+}
+
+
+static void useronline()
+{
+    Member *member = malloc(sizeof(Member));
+
+    sscanf(buffer, "!useronline=%s", member->username);
+    printf("User \"%s\" has connected.\n", member->username);
+    HASH_ADD_STR(online_members, username, member);
+}
+
+
+static void parse_control_message(char* buffer)
+{
+
+    if(strncmp("!useroffline=", buffer, 13) == 0)
+        useroffline();
+
+    else if(strncmp("!useronline=", buffer, 12) == 0)
+        useronline();
+
+    else if(strncmp("!longmsg=", buffer, 9) == 0)
+        recv_long_msg();
+
+    else if(strncmp("!userlist=", buffer, 10) == 0)
+        parse_userlist();
+
+    else
+        printf("Received invalid control message \"%s\"\n", buffer);
+}
 
 
 /******************************/

@@ -352,8 +352,6 @@ static inline int userlist()
     userlist_msg[userlist_size] = '\0';
     ++userlist_size;
     
-    printf("(size: %zu, strlen: %zu)\"%s\"\n", userlist_size, strlen(userlist_msg), userlist_msg);
-    
     send_new_long_msg(userlist_msg, userlist_size);
     free(userlist_msg);
 

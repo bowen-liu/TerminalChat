@@ -168,6 +168,11 @@ static int register_with_server()
     {
         sscanf(&buffer[19], "%s", userName);
         printf("Registered with server as \"%s\"\n", userName);
+
+        //Request a list of active users from the server. The response will be handled once main loop starts
+        strcpy(buffer, "!userlist");
+        if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+            return 0;
         return 1;
     }
 
@@ -241,6 +246,7 @@ static void useroffline()
         return;
     }
     HASH_DEL(online_members, member);
+    --users_online;
 }
 
 
@@ -251,6 +257,7 @@ static void useronline()
     sscanf(buffer, "!useronline=%s", member->username);
     printf("User \"%s\" has connected.\n", member->username);
     HASH_ADD_STR(online_members, username, member);
+    ++users_online;
 }
 
 

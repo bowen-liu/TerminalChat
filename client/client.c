@@ -359,7 +359,7 @@ void client(const char* ipaddr, const int port,  char *username)
 {
     int retval;
 
-    if(!username_is_valid(username))
+    if(!name_is_valid(username))
         return;
     
     buffer = calloc(BUFSIZE, sizeof(char));

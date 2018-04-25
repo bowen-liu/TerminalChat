@@ -5,7 +5,7 @@
 
 //Server socket structures
 static int server_socketfd;
-static struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
+static struct sockaddr_in server_addr;              //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
 
 //epoll FD for handling multiple clients 
 static int epoll_fd;  
@@ -15,12 +15,13 @@ static char *buffer;
 static size_t buffer_size = BUFSIZE;
 
 //Keeping track of clients
-Client *active_clients = NULL;                  //Hashes client's FD to their descriptors
-Username_Map *active_clients_names = NULL;      //Hashes each unique name to their corresponding descriptors
-
-Client *current_client;                         //Descriptor for the client being serviced right now
+Client *active_connections = NULL;                  //Hashtable of all active client sockets (key = socketfd)
+User *active_users = NULL;                          //Hashtable of all active users (key = username), mapped to their client descriptors
+Group* groups = NULL;                               //Hashtable of all user created private chatrooms (key = groupname)
 unsigned int total_users = 0;    
 
+//Client being served right now
+Client *current_client;                         //Descriptor for the client being serviced right now
 
 
 /******************************/
@@ -32,7 +33,9 @@ static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, in
 static void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
-    Username_Map *username_map;
+    User *User;
+
+    Namelist *group, *tmp;
     
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!\n");
@@ -43,10 +46,17 @@ static void disconnect_client(Client *c)
     if(strlen(c->username) == 0)
     {
         printf("Dropping unregistered connection...\n");
-        HASH_DEL(active_clients, c);
+        HASH_DEL(active_connections, c);
         free(c);
 
         return;
+    }
+
+    //Leave participating chat groups. TODO: Complete implementing this!
+    LL_FOREACH_SAFE(c->groups_joined, group, tmp)
+    {
+        printf("TODO: Leaving group \"%s\"\n", group->name);
+        free(group);
     }
         
     //Free up resources used by the user
@@ -54,11 +64,11 @@ static void disconnect_client(Client *c)
     printf("Disconnecting \"%s\"\n", c->username);
     send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);
 
-    HASH_FIND_STR(active_clients_names, c->username, username_map);
-    HASH_DEL(active_clients_names, username_map);
-    free(username_map);
+    HASH_FIND_STR(active_users, c->username, User);
+    HASH_DEL(active_users, User);
+    free(User);
     
-    HASH_DEL(active_clients, c);
+    HASH_DEL(active_connections, c);
     free(c);
 
     --total_users;
@@ -93,6 +103,23 @@ static unsigned int send_msg(Client *c, char* buffer, size_t size)
 }
 
 
+static unsigned int send_group(Group* group, char* buffer, size_t size)
+{
+    unsigned int members_sent = 0;
+    User *curr = NULL, *tmp;
+
+    HASH_ITER(hh, group->members, curr, tmp) 
+    {
+        if(!send_msg(curr->c, buffer, size))
+            printf("Send failed to user \"%s\" in group \"%s\"\n", curr->username, group->groupname);
+        else
+            ++members_sent;
+    }
+
+    return members_sent;
+}
+
+
 static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
 {
     int count = 0;
@@ -105,7 +132,7 @@ static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, in
         sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
     
     //Send the message in the buffer to every active client
-    HASH_ITER(hh, active_clients, curr, temp)
+    HASH_ITER(hh, active_connections, curr, temp)
     {
         if(!include_current_client && curr->socketfd == current_client->socketfd)
             continue;
@@ -116,7 +143,6 @@ static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, in
     
     return count;
 }
-
 
 
 static void send_long_msg()
@@ -214,12 +240,56 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 /*      Client Operations    */
 /******************************/
 
+static inline int group_msg()
+{
+    char *target_group;
+    char *target_msg;
+    char gmsg[MAX_MSG_LENG];
+    Group *target;
+    User *sender_is_member;
+
+    //Find the occurance of the first space
+    target_msg = strchr(buffer, ' ');
+    if(!target_msg)
+    {
+        printf("Invalid group specified, or no message specified\n");
+        return 0;
+    }
+
+    //Seperate the target's name and message from the buffer
+    target_group = &buffer[2];
+    target_msg[0] = '\0';              //Mark the space separating the username and message as NULL, so we can directly read the username from the pointer
+    target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
+
+    //Find if the requested group currently exists
+    HASH_FIND_STR(groups, target_group, target);
+    if(!target)
+    {
+        printf("Group \"%s\" not found\n", target_group);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+
+    //Checks if t he sender is part of the group
+    HASH_FIND_STR(target->members, current_client->username, sender_is_member);
+    if(!sender_is_member)
+    {
+        printf("User \"%s\" is not a member of \"%s\"\n", current_client->username, target_group);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Forward message to the target
+    sprintf(gmsg, "%s (%s): %s", current_client->username, target->groupname, target_msg);
+    return send_group(target, gmsg, strlen(gmsg)+1);
+}
+
 static inline int client_pm()
 {
     char *target_username;
     char *target_msg;
     char pmsg[MAX_MSG_LENG];
-    Username_Map *target;
+    User *target;
 
     //Find the occurance of the first space
     target_msg = strchr(buffer, ' ');
@@ -235,7 +305,7 @@ static inline int client_pm()
     target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
 
     //Find if anyone with the requested username is online
-    HASH_FIND_STR(active_clients_names, target_username, target);
+    HASH_FIND_STR(active_users, target_username, target);
     if(!target)
     {
         printf("User \"%s\" not found\n", target_username);
@@ -259,17 +329,17 @@ static inline int client_pm()
 static inline int register_client()
 {
     char *username = malloc(USERNAME_LENG+1);
-    Username_Map *result;
+    User *result;
 
     char *new_username;
     int duplicates = 0, max_duplicates_allowed;
 
     sscanf(buffer, "!register:username=%s", username);
-    if(!username_is_valid(username))
+    if(!name_is_valid(username))
         return 0;
     
     //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
-    HASH_FIND_STR(active_clients_names, username, result);
+    HASH_FIND_STR(active_users, username, result);
     while(result != NULL)
     {
         if(duplicates == 0)
@@ -300,7 +370,7 @@ static inline int register_client()
 
         //Test if the new name with a newly appended value is used
         sprintf(new_username, "%s_%d", username, duplicates);
-        HASH_FIND_STR(active_clients_names, new_username, result);
+        HASH_FIND_STR(active_users, new_username, result);
     }
 
     if(duplicates)
@@ -311,11 +381,11 @@ static inline int register_client()
     }
 
     //Register the client's requested username
-    result = malloc(sizeof(Username_Map));
+    result = malloc(sizeof(User));
     result->c = current_client;
     strcpy(current_client->username, username);
     strcpy(result->username, username);
-    HASH_ADD_STR(active_clients_names, username, result);
+    HASH_ADD_STR(active_users, username, result);
     free(username);
 
     printf("Registering user \"%s\"\n", current_client->username);
@@ -334,16 +404,16 @@ static inline int register_client()
 
 static inline int userlist()
 {
-    char* userlist_msg = malloc(HASH_COUNT(active_clients_names) * (USERNAME_LENG+1) + EXTRA_CHARS);
+    char* userlist_msg = malloc(total_users * (USERNAME_LENG+1) + EXTRA_CHARS);
     size_t userlist_size = 0;
-    Username_Map *curr, *temp;
+    User *curr, *temp;
 
     //Add command header to the beginning of the buffer
     sprintf(userlist_msg, "!userlist=%d", total_users);
     userlist_size = strlen(userlist_msg);
 
     //Iterate through the list of active usernames and append them to the buffer one at a time
-    HASH_ITER(hh, active_clients_names, curr, temp)
+    HASH_ITER(hh, active_users, curr, temp)
     {
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
@@ -356,6 +426,84 @@ static inline int userlist()
     free(userlist_msg);
 
     return 1;
+}
+
+//!newgroup=eeee,abc,def
+static inline int create_new_group()
+{
+    Group* newgroup = calloc(1, sizeof(Group));
+    Group* groupname_exists = NULL;
+
+    User *user = NULL, *newmember;
+    Namelist *newgroup_entry;
+
+    char *newbuffer = buffer, *token;
+    int retval;
+
+    //Ensure the groupname is valid and does not already exist
+    token = strtok(buffer, ",");
+    sscanf(token, "!newgroup=%s", newgroup->groupname);
+
+    if(!name_is_valid(newgroup->groupname))
+    {
+        send_msg(current_client, "InvalidGroupName", 17);
+        free(newgroup);
+        return 0;
+    }
+
+    HASH_FIND_STR(groups, newgroup->groupname, groupname_exists);
+    if(groupname_exists)
+    {
+        printf("Group \"%s\" already exists.\n", newgroup->groupname);
+        send_msg(current_client, "InvalidGroupName", 17);
+        free(newgroup);
+        return 0;
+    }
+
+    //Register the group
+    HASH_ADD_STR(groups, groupname, newgroup);
+    
+
+    //Add each specified member into the group, starting with the group creator
+    token = current_client->username;
+    while(token)
+    {
+        HASH_FIND_STR(active_users, token, user);
+        if(!user)
+        {
+            printf("Could not find member \"%s\"\n", token);
+            token = strtok(NULL, ",");
+            continue;
+        }
+
+        printf("Adding member \"%s\" to group \"%s\"\n", token, newgroup->groupname);
+
+        newmember = malloc(sizeof(User));
+        strcpy(newmember->username, user->username);
+        newmember->c = user->c;
+        HASH_ADD_STR(newgroup->members, username, newmember);
+        ++newgroup->member_count;
+        
+        //Record the participation of this group for each user's client descriptors
+        newgroup_entry = calloc(1, sizeof(Namelist));
+        strcpy(newgroup_entry->name, newgroup->groupname);
+        LL_APPEND(user->c->groups_joined, newgroup_entry);
+
+        token = strtok(NULL, ",");
+    }
+
+    
+    //Tell each of the clients to join the group
+    sprintf(buffer, "!joingroup=%s", newgroup->groupname);
+    retval = send_group(newgroup, buffer, strlen(buffer)+1);
+
+    if(!retval)
+    {
+        printf("Unable to invite any members to the new group. Cancelling...\n");
+        free(newgroup);
+    }
+
+    return retval;
 }
 
 
@@ -390,6 +538,11 @@ static inline int parse_client_command()
         return 1;
     }
 
+    else if(strncmp(buffer, "!newgroup=", 10) == 0)
+    {
+        return create_new_group();
+    }
+
     else
     {
         printf("Invalid command \"%s\"\n", buffer);
@@ -421,9 +574,14 @@ static inline int handle_client_msg()
     if(buffer[0] == '!')
         return parse_client_command();
 
-    //Direct messaging to another user/group
+    //Private messaging between two users if message starts with "@". Group message if message starts with "@@"
     else if(buffer[0] == '@')
-        return client_pm();
+    {
+        if(buffer[1] == '@')
+            return group_msg();
+        else
+            return client_pm();
+    }
 
     //Broadcast regular messages to all other active clients
     else
@@ -450,8 +608,8 @@ static inline int handle_new_connection()
     }
     printf("Accepted client %s:%d\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
 
-    //Add the client into active_clients, and use its socketfd as the key.
-    HASH_ADD_INT(active_clients, socketfd, new_client);
+    //Add the client into active_connections, and use its socketfd as the key.
+    HASH_ADD_INT(active_connections, socketfd, new_client);
 
     //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
@@ -524,7 +682,7 @@ static inline void server_main_loop()
             //When an event is occuring on an existing client connection
             else
             {                
-                HASH_FIND_INT(active_clients, &events[i].data.fd, current_client);
+                HASH_FIND_INT(active_connections, &events[i].data.fd, current_client);
 
                 //Handle EPOLLRDHUP: the client has closed its connection unexpectedly
                 if(events[i].events & EPOLLRDHUP)

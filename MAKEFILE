@@ -8,7 +8,7 @@ common.o:
 server.o: common.o
 	$(CC) -c server/server.c
 
-client.o: 
+client.o: common.o
 	$(CC) -c client/client.c
 
 main: server.o client.o

@@ -45,7 +45,7 @@ int update_epoll_events(int epoll_fd, int socketfd, int event_flags)
 }  
 
 
-int username_is_valid(char* username)
+int name_is_valid(char* username)
 {
     int i;
     
@@ -68,7 +68,7 @@ int username_is_valid(char* username)
             continue;
         else
         {
-            printf("Found invalid character \'%c\' in the username. Username may only contain 0-9, A-Z, a-z, and \'.\', \'_\', \'-\'.\n", username[i]);
+            printf("Found invalid character \'%c\' in the name. Names may only contain 0-9, A-Z, a-z, and \'.\', \'_\', \'-\'.\n", username[i]);
             return 0;
         }
     }

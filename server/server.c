@@ -300,7 +300,7 @@ static inline int create_new_group()
     Group* newgroup = calloc(1, sizeof(Group));
     Group* groupname_exists = NULL;
 
-    User *user = NULL, *newmember;
+    User *target_user = NULL, *newmember;
     Namelist *newgroup_entry;
 
     char *newbuffer = buffer, *token;
@@ -334,15 +334,15 @@ static inline int create_new_group()
     token = current_client->username;
     while(token)
     {
-        HASH_FIND_STR(active_users, token, user);
-        if(!user)
+        HASH_FIND_STR(active_users, token, target_user);
+        if(!target_user)
         {
             printf("Could not find member \"%s\"\n", token);
             token = strtok(NULL, ",");
             continue;
         }
 
-        join_group_direct(newgroup, user->c);
+        join_group_direct(newgroup, target_user->c);
 
         token = strtok(NULL, ",");
     }
@@ -365,18 +365,18 @@ static inline int create_new_group()
 static int leave_group_direct(Group *group, Client *c)
 {
     char leavemsg[BUFSIZE];
-    User* user;
+    User* target_user;
     
-    HASH_FIND_STR(group->members, c->username, user);
-    if(!user)
+    HASH_FIND_STR(group->members, c->username, target_user);
+    if(!target_user)
     {
         printf("Leave: User \"%s\" not found in group \"%s\".\n", c->username, group->groupname);
         return 0;
     }
 
-    HASH_DEL(group->members, user);
+    HASH_DEL(group->members, target_user);
     --group->member_count;
-    free(user);
+    free(target_user);
 
     sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
     printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
@@ -474,6 +474,60 @@ static int join_group()
     //Announce to other existing members that a new member has joined the group
     sprintf(buffer, "!joinedgroup=%s,user=%s", group->groupname, current_client->username);
     send_group(group, buffer, strlen(buffer)+1);
+
+    return 1;
+}
+
+static int invite_to_group()
+{
+    char username[USERNAME_LENG+1];
+    Namelist *new_group_entry = calloc(1, sizeof(Namelist));
+    Group* group;
+    User* target_user;
+    
+    sscanf(buffer, "!invitegroup=%[^,],user=%s", new_group_entry->name, username);
+
+    //Locate this group in the hash table
+    HASH_FIND_STR(groups, new_group_entry->name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", new_group_entry->name);
+        send_msg(current_client, "InvalidGroup", 13);
+        free(new_group_entry);
+        return 0;
+    }
+
+    //Check if this user is already in the group
+    HASH_FIND_STR(group->members, username, target_user);
+    if(target_user)
+    {
+        printf("User \"%s\" is already a member of the group \"%s\".\n", username, new_group_entry->name);
+        send_msg(current_client, "AlreadyExist", 13);
+        free(new_group_entry);
+        return 0;
+    }
+
+    //Locate the member to be Added
+    HASH_FIND_STR(active_users, username, target_user);
+    if(!target_user)
+    {
+        printf("User \"%s\" was not found.\n", username);
+        send_msg(current_client, "UserNotFound", 13);
+        free(new_group_entry);
+        return 0;
+    }
+
+    //Announce to other existing members that a new member was invited
+    sprintf(buffer, "User \"%s\" has invited \"%s\" to join the group \"%s\"", current_client->username, username, group->groupname);
+    send_group(group, buffer, strlen(buffer)+1);
+
+    //Add an entry to the client's groups_joined list
+    join_group_direct(group, target_user->c);
+
+    //Invite the requested member to join the group
+    sprintf(buffer, "!groupinvite=%s,sender=%s", new_group_entry->name, current_client->username);
+    if(!send_msg(target_user->c, buffer, strlen(buffer)+1))       //TODO: what if send failed?
+        return 0;
 
     return 1;
 }
@@ -671,6 +725,11 @@ static inline int parse_client_command()
     else if(strncmp(buffer, "!leavegroup=", 12) == 0)
     {
         return leave_group();
+    }
+
+    else if(strncmp(buffer, "!invitegroup=", 13) == 0)
+    {
+        return invite_to_group();
     }
 
     else

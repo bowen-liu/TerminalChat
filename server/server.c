@@ -29,14 +29,14 @@ Client *current_client;                         //Descriptor for the client bein
 /******************************/                 
 
 static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
-static int leave_group_direct(Group *group, Client *c, Namelist* user_groups_joined_ptr);
+static int leave_group_direct(Group *group, Client *c);
 
 static void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
     User *User;
 
-    Namelist *group_name, *tmp_name;
+    Namelist *current_group_name, *tmp_name;
     Group *group;
     
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
@@ -55,13 +55,17 @@ static void disconnect_client(Client *c)
     }
 
     //Leave participating chat groups. TODO: Complete implementing this!
-    LL_FOREACH_SAFE(c->groups_joined, group_name, tmp_name)
+    LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
     {
-        printf("Leaving group \"%s\"\n", group_name->name);
-        HASH_FIND_STR(groups, group_name->name, group);
+        printf("Leaving group \"%s\"\n", current_group_name->name);
+        HASH_FIND_STR(groups, current_group_name->name, group);
 
         if(group)
-            leave_group_direct(group, current_client, group_name);
+        {
+            leave_group_direct(group, current_client);
+            LL_DELETE(current_client->groups_joined, current_group_name);
+            free(current_group_name);
+        }
     }
         
     //Free up resources used by the user
@@ -289,6 +293,8 @@ static inline int group_msg()
 }
 
 //!newgroup=eeee,abc,def
+
+static void join_group_direct(Group *group, Client *c);
 static inline int create_new_group()
 {
     Group* newgroup = calloc(1, sizeof(Group));
@@ -336,18 +342,7 @@ static inline int create_new_group()
             continue;
         }
 
-        printf("Adding member \"%s\" to group \"%s\"\n", token, newgroup->groupname);
-
-        newmember = malloc(sizeof(User));
-        strcpy(newmember->username, user->username);
-        newmember->c = user->c;
-        HASH_ADD_STR(newgroup->members, username, newmember);
-        ++newgroup->member_count;
-        
-        //Record the participation of this group for each user's client descriptors
-        newgroup_entry = calloc(1, sizeof(Namelist));
-        strcpy(newgroup_entry->name, newgroup->groupname);
-        LL_APPEND(user->c->groups_joined, newgroup_entry);
+        join_group_direct(newgroup, user->c);
 
         token = strtok(NULL, ",");
     }
@@ -367,7 +362,7 @@ static inline int create_new_group()
 }
 
 
-static int leave_group_direct(Group *group, Client *c, Namelist* user_groups_joined_ptr)
+static int leave_group_direct(Group *group, Client *c)
 {
     char leavemsg[BUFSIZE];
     User* user;
@@ -381,10 +376,7 @@ static int leave_group_direct(Group *group, Client *c, Namelist* user_groups_joi
 
     HASH_DEL(group->members, user);
     --group->member_count;
-    
     free(user);
-    if(user_groups_joined_ptr)
-        free(user_groups_joined_ptr);
 
     sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
     printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
@@ -426,13 +418,63 @@ static int leave_group()
         return 0;
     }
 
+    LL_DELETE(current_client->groups_joined, current_group_name);
+    free(current_group_name);
+
     //Leave the group officially
-    return leave_group_direct(group, current_client, current_group_name);
+    return leave_group_direct(group, current_client);
+}
+
+
+static void join_group_direct(Group *group, Client *c)
+{
+    User *newmember = malloc(sizeof(User));
+    Namelist *newgroup_entry;
+
+    strcpy(newmember->username, c->username);
+    newmember->c = c;
+    HASH_ADD_STR(group->members, c->username, newmember);
+    ++group->member_count;
+    
+    //Record the participation of this group for each user's client descriptors
+    newgroup_entry = calloc(1, sizeof(Namelist));
+    strcpy(newgroup_entry->name, group->groupname);
+    LL_APPEND(c->groups_joined, newgroup_entry);
+
+    printf("Added member \"%s\" to group \"%s\"\n", c->username, group->groupname);
+
+    //Now you must send a !groupinvite command to the new member
 }
 
 
 static int join_group()
 {
+    Namelist *new_group_entry = calloc(1, sizeof(Namelist));
+    Group *group;
+    
+    sscanf(buffer, "!joingroup=%s", new_group_entry->name);
+
+    //Locate this group in the hash table
+    HASH_FIND_STR(groups, new_group_entry->name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", new_group_entry->name);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+
+    //Add an entry to the client's groups_joined list
+    join_group_direct(group, current_client);
+
+    //Inform the new member that the join was sucessful
+    sprintf(buffer, "!groupjoined=%s", group->groupname);
+    if(!send_msg(current_client, buffer, strlen(buffer)+1))       //TODO: what if send failed?
+        return 0;
+
+    //Announce to other existing members that a new member has joined the group
+    sprintf(buffer, "!joinedgroup=%s,user=%s", group->groupname, current_client->username);
+    send_group(group, buffer, strlen(buffer)+1);
+
     return 1;
 }
 

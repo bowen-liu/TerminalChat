@@ -207,6 +207,7 @@ static int leave_group()
     }
 
     printf("You have left the group \"%s\".\n", groupname);
+    LL_DELETE(groups_joined, current_group_name);
     free(current_group_name);
     return 1;
 }
@@ -262,13 +263,26 @@ static void user_online()
     ++users_online;
 }
 
+//TODO: Maybe allow the user to choose to decline an invitation?
 static void group_invited()
 {
     Namelist *groupname = malloc(sizeof(Namelist));
     char invite_sender[USERNAME_LENG+1];
 
     sscanf(buffer, "!groupinvite=%[^,],sender=%s", groupname->name, invite_sender);
-    printf("You have been added to the group \"%s\" by user \"%s\"\n", groupname->name, invite_sender);
+    printf("You have been added to the group \"%s\" by user \"%s\".\n", groupname->name, invite_sender);
+
+    //Record the invited group into the list of participating groups
+    LL_APPEND(groups_joined, groupname);
+}
+
+static void group_joined()
+{
+    Namelist *groupname = malloc(sizeof(Namelist));
+    char invite_sender[USERNAME_LENG+1];
+
+    sscanf(buffer, "!groupjoined=%s", groupname->name);
+    printf("You have joined the group \"%s\".\n", groupname->name);
 
     //Record the invited group into the list of participating groups
     LL_APPEND(groups_joined, groupname);
@@ -285,7 +299,10 @@ static void user_left_group()
 
 static void user_joined_group()
 {
-    
+    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
+
+    sscanf(buffer, "!joinedgroup=%[^,],user=%s", groupname, username);
+    printf("User \"%s\" has joined the group \"%s\".\n", username, groupname);
 }
 
 
@@ -344,14 +361,14 @@ static void parse_control_message(char* buffer)
     else if(strncmp("!groupinvite=", buffer, 13) == 0)
         group_invited();
 
-    else if(strncmp("!groupinvite=", buffer, 13) == 0)
-        group_invited();
+    else if(strncmp("!groupjoined=", buffer, 13) == 0)
+        group_joined();
 
     else if(strncmp("!leftgroup=", buffer, 11) == 0)
         user_left_group();
 
     else if(strncmp("!joinedgroup=", buffer, 13) == 0)
-        user_left_group();
+        user_joined_group();
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);

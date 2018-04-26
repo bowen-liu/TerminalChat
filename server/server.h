@@ -36,12 +36,6 @@ typedef struct {
 } User;
 
 
-typedef struct namelist {
-    char name[USERNAME_LENG+1];
-    struct namelist *next;
-} Namelist;
-
-
 
 /*Groups*/
 
@@ -49,7 +43,7 @@ typedef struct group {
     char groupname[USERNAME_LENG+1];
     User *members;
     unsigned int member_count;
-    unsigned int invite_only : 1;
+    //unsigned int invite_only : 1;
 
     UT_hash_handle hh;
 } Group;

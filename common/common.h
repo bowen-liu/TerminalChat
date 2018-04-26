@@ -26,6 +26,15 @@
 
 #define LONG_RECV_PAGE_SIZE 32      //For testing long send/recv
 
+
+
+typedef struct namelist {
+    char name[USERNAME_LENG+1];
+    struct namelist *next;
+} Namelist;
+
+
+
 void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 int update_epoll_events(int epoll_fd, int socketfd, int event_flags);

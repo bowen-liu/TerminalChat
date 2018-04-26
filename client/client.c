@@ -22,10 +22,12 @@ static size_t received_long;
 
 //User info
 static char* userName;
+static Namelist* groups_joined;
+
 
 //Other clients
-Member *online_members = NULL;
-unsigned int users_online = 0;
+static Member *online_members = NULL;
+static unsigned int users_online = 0;
 
 
 /******************************/
@@ -141,7 +143,7 @@ static void recv_long_msg()
 
 
 /******************************/
-/*      Client Operations     */
+/*   Client-side Operations    */
 /******************************/
 
 static int register_with_server()
@@ -182,6 +184,111 @@ static int register_with_server()
 }
 
 
+static int leave_group()
+{
+    char groupname[USERNAME_LENG+1];
+    Namelist *current_group_name, *tmp_name;
+
+    sscanf(buffer, "!leavegroup=%s", groupname);
+
+    //Find the entry in the client's group_joined list and remove the entry
+    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp_name)
+    {
+        if(strcmp(groupname, current_group_name->name) == 0)
+            break;
+        else 
+            current_group_name = NULL;
+    }
+
+    if(!current_group_name)
+    {
+        printf("You do not appear to be a member of the group \"%s\".\n", groupname);
+        return 0;
+    }
+
+    printf("You have left the group \"%s\".\n", groupname);
+    free(current_group_name);
+    return 1;
+}
+
+
+static int handle_user_command()
+{
+    //Todo: escape commands like "!register"
+    if(strcmp(buffer, "!close") == 0)
+    {
+        printf("Closing connection!\n");
+        return -1;
+    }
+    else if(strncmp(buffer, "!leavegroup=", 12) == 0)
+    {
+        return leave_group();
+    }
+
+    return 1;
+}
+
+
+/******************************/
+/*  Server Control Messages   */
+/******************************/
+
+static void user_offline()
+{
+    char target_username[USERNAME_LENG+1];
+    Member *member;
+
+    sscanf(buffer, "!useroffline=%s", target_username);
+    printf("User \"%s\" has disconnected.\n", target_username);
+
+    HASH_FIND_STR(online_members, target_username, member);
+    if(!member)
+    {
+        printf("Could not find \"%s\" in the online list!\n", target_username);
+        return;
+    }
+    HASH_DEL(online_members, member);
+    --users_online;
+}
+
+
+static void user_online()
+{
+    Member *member = malloc(sizeof(Member));
+
+    sscanf(buffer, "!useronline=%s", member->username);
+    printf("User \"%s\" has connected.\n", member->username);
+    HASH_ADD_STR(online_members, username, member);
+    ++users_online;
+}
+
+static void group_invited()
+{
+    Namelist *groupname = malloc(sizeof(Namelist));
+    char invite_sender[USERNAME_LENG+1];
+
+    sscanf(buffer, "!groupinvite=%[^,],sender=%s", groupname->name, invite_sender);
+    printf("You have been added to the group \"%s\" by user \"%s\"\n", groupname->name, invite_sender);
+
+    //Record the invited group into the list of participating groups
+    LL_APPEND(groups_joined, groupname);
+}
+
+static void user_left_group()
+{
+    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
+
+    sscanf(buffer, "!leftgroup=%[^,],user=%s", groupname, username);
+    printf("User \"%s\" has left the group \"%s\".\n", username, groupname);
+}
+
+
+static void user_joined_group()
+{
+    
+}
+
+
 static void parse_userlist()
 {
     char* newbuffer = buffer;
@@ -219,62 +326,32 @@ static void parse_userlist()
 }
 
 
-static int handle_user_command()
-{
-    //Todo: escape commands like "!register"
-    
-    return 1;
-}
-
-
-/******************************/
-/*  Server Control Messages   */
-/******************************/
-
-static void useroffline()
-{
-    char target_username[USERNAME_LENG+1];
-    Member *member;
-
-    sscanf(buffer, "!useroffline=%s", target_username);
-    printf("User \"%s\" has disconnected.\n", target_username);
-
-    HASH_FIND_STR(online_members, target_username, member);
-    if(!member)
-    {
-        printf("Could not find \"%s\" in the online list!\n", target_username);
-        return;
-    }
-    HASH_DEL(online_members, member);
-    --users_online;
-}
-
-
-static void useronline()
-{
-    Member *member = malloc(sizeof(Member));
-
-    sscanf(buffer, "!useronline=%s", member->username);
-    printf("User \"%s\" has connected.\n", member->username);
-    HASH_ADD_STR(online_members, username, member);
-    ++users_online;
-}
-
-
 static void parse_control_message(char* buffer)
 {
 
     if(strncmp("!useroffline=", buffer, 13) == 0)
-        useroffline();
+        user_offline();
 
     else if(strncmp("!useronline=", buffer, 12) == 0)
-        useronline();
+        user_online();
 
     else if(strncmp("!longmsg=", buffer, 9) == 0)
         recv_long_msg();
 
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
+
+    else if(strncmp("!groupinvite=", buffer, 13) == 0)
+        group_invited();
+
+    else if(strncmp("!groupinvite=", buffer, 13) == 0)
+        group_invited();
+
+    else if(strncmp("!leftgroup=", buffer, 11) == 0)
+        user_left_group();
+
+    else if(strncmp("!joinedgroup=", buffer, 13) == 0)
+        user_left_group();
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);
@@ -308,7 +385,7 @@ static inline void client_main_loop()
             //When the user enters a message from stdin
             if(events[i].data.fd == 0)
             {
-                //Read from stdin and remove the newline character
+                //Read from stdin and remove the newline character. TODO: Use readline() maybe?
                 bytes = getline(&buffer, &buffer_size, stdin);
                 remove_newline(buffer);
                 --bytes;
@@ -321,11 +398,12 @@ static inline void client_main_loop()
                 if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
                     return;
 
-                if(strcmp(buffer, "!close") == 0)
+                //If the client has specified a command, check if anything needs to be done on the client side immediately
+                if(buffer[0] == '!')
                 {
-                    printf("Closing connection!\n");
-                    break;
-                }
+                    if(handle_user_command() < 0)
+                        exit(0);
+                }   
             }
             
             //Message from Server

@@ -29,13 +29,15 @@ Client *current_client;                         //Descriptor for the client bein
 /******************************/                 
 
 static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
+static int leave_group_direct(Group *group, Client *c, Namelist* user_groups_joined_ptr);
 
 static void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
     User *User;
 
-    Namelist *group, *tmp;
+    Namelist *group_name, *tmp_name;
+    Group *group;
     
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!\n");
@@ -53,10 +55,13 @@ static void disconnect_client(Client *c)
     }
 
     //Leave participating chat groups. TODO: Complete implementing this!
-    LL_FOREACH_SAFE(c->groups_joined, group, tmp)
+    LL_FOREACH_SAFE(c->groups_joined, group_name, tmp_name)
     {
-        printf("TODO: Leaving group \"%s\"\n", group->name);
-        free(group);
+        printf("Leaving group \"%s\"\n", group_name->name);
+        HASH_FIND_STR(groups, group_name->name, group);
+
+        if(group)
+            leave_group_direct(group, current_client, group_name);
     }
         
     //Free up resources used by the user
@@ -74,10 +79,10 @@ static void disconnect_client(Client *c)
     --total_users;
 }
 
+
 /******************************/
 /*     Basic Send/Receive     */
 /******************************/
-
 
 static unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
@@ -100,23 +105,6 @@ static unsigned int send_msg(Client *c, char* buffer, size_t size)
         return 0;
     }
     return bytes;
-}
-
-
-static unsigned int send_group(Group* group, char* buffer, size_t size)
-{
-    unsigned int members_sent = 0;
-    User *curr = NULL, *tmp;
-
-    HASH_ITER(hh, group->members, curr, tmp) 
-    {
-        if(!send_msg(curr->c, buffer, size))
-            printf("Send failed to user \"%s\" in group \"%s\"\n", curr->username, group->groupname);
-        else
-            ++members_sent;
-    }
-
-    return members_sent;
 }
 
 
@@ -237,8 +225,24 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 
 
 /******************************/
-/*      Client Operations    */
+/*      Group Operations    */
 /******************************/
+
+static unsigned int send_group(Group* group, char* buffer, size_t size)
+{
+    unsigned int members_sent = 0;
+    User *curr = NULL, *tmp;
+
+    HASH_ITER(hh, group->members, curr, tmp) 
+    {
+        if(!send_msg(curr->c, buffer, size))
+            printf("Send failed to user \"%s\" in group \"%s\"\n", curr->username, group->groupname);
+        else
+            ++members_sent;
+    }
+
+    return members_sent;
+}
 
 static inline int group_msg()
 {
@@ -283,6 +287,159 @@ static inline int group_msg()
     sprintf(gmsg, "%s (%s): %s", current_client->username, target->groupname, target_msg);
     return send_group(target, gmsg, strlen(gmsg)+1);
 }
+
+//!newgroup=eeee,abc,def
+static inline int create_new_group()
+{
+    Group* newgroup = calloc(1, sizeof(Group));
+    Group* groupname_exists = NULL;
+
+    User *user = NULL, *newmember;
+    Namelist *newgroup_entry;
+
+    char *newbuffer = buffer, *token;
+    int retval;
+
+    //Ensure the groupname is valid and does not already exist
+    token = strtok(buffer, ",");
+    sscanf(token, "!newgroup=%s", newgroup->groupname);
+
+    if(!name_is_valid(newgroup->groupname))
+    {
+        send_msg(current_client, "InvalidGroupName", 17);
+        free(newgroup);
+        return 0;
+    }
+
+    HASH_FIND_STR(groups, newgroup->groupname, groupname_exists);
+    if(groupname_exists)
+    {
+        printf("Group \"%s\" already exists.\n", newgroup->groupname);
+        send_msg(current_client, "InvalidGroupName", 17);
+        free(newgroup);
+        return 0;
+    }
+
+    //Register the group
+    HASH_ADD_STR(groups, groupname, newgroup);
+    
+
+    //Add each specified member into the group, starting with the group creator
+    token = current_client->username;
+    while(token)
+    {
+        HASH_FIND_STR(active_users, token, user);
+        if(!user)
+        {
+            printf("Could not find member \"%s\"\n", token);
+            token = strtok(NULL, ",");
+            continue;
+        }
+
+        printf("Adding member \"%s\" to group \"%s\"\n", token, newgroup->groupname);
+
+        newmember = malloc(sizeof(User));
+        strcpy(newmember->username, user->username);
+        newmember->c = user->c;
+        HASH_ADD_STR(newgroup->members, username, newmember);
+        ++newgroup->member_count;
+        
+        //Record the participation of this group for each user's client descriptors
+        newgroup_entry = calloc(1, sizeof(Namelist));
+        strcpy(newgroup_entry->name, newgroup->groupname);
+        LL_APPEND(user->c->groups_joined, newgroup_entry);
+
+        token = strtok(NULL, ",");
+    }
+
+    
+    //Tell each of the clients to join the group
+    sprintf(buffer, "!groupinvite=%s,sender=%s", newgroup->groupname, current_client->username);
+    retval = send_group(newgroup, buffer, strlen(buffer)+1);
+
+    if(!retval)
+    {
+        printf("Unable to invite any members to the new group. Cancelling...\n");
+        free(newgroup);
+    }
+
+    return retval;
+}
+
+
+static int leave_group_direct(Group *group, Client *c, Namelist* user_groups_joined_ptr)
+{
+    char leavemsg[BUFSIZE];
+    User* user;
+    
+    HASH_FIND_STR(group->members, c->username, user);
+    if(!user)
+    {
+        printf("Leave: User \"%s\" not found in group \"%s\".\n", c->username, group->groupname);
+        return 0;
+    }
+
+    HASH_DEL(group->members, user);
+    --group->member_count;
+    
+    free(user);
+    if(user_groups_joined_ptr)
+        free(user_groups_joined_ptr);
+
+    sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
+    printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
+    send_group(group, leavemsg, strlen(leavemsg)+1);
+
+    return 1;
+}
+
+static int leave_group()
+{
+    char groupname[USERNAME_LENG+1];
+    Namelist *current_group_name, *tmp_name;
+    Group *group;
+
+    sscanf(buffer, "!leavegroup=%s", groupname);
+
+    //Locate this group in the hash table
+    HASH_FIND_STR(groups, groupname, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", groupname);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+    
+    //Find the entry in the client's group_joined list and remove the entry
+    LL_FOREACH_SAFE(current_client->groups_joined, current_group_name, tmp_name)
+    {
+        if(strcmp(groupname, current_group_name->name) == 0)
+            break;
+        else 
+            current_group_name = NULL;
+    }
+
+    if(!current_group_name)
+    {
+        printf("Leave: User \"%s\" not found in group \"%s\" (by joined_groups).\n", current_client->username, groupname);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Leave the group officially
+    return leave_group_direct(group, current_client, current_group_name);
+}
+
+
+static int join_group()
+{
+    return 1;
+}
+
+
+/******************************/
+/*      Client Operations    */
+/******************************/
 
 static inline int client_pm()
 {
@@ -428,91 +585,12 @@ static inline int userlist()
     return 1;
 }
 
-//!newgroup=eeee,abc,def
-static inline int create_new_group()
-{
-    Group* newgroup = calloc(1, sizeof(Group));
-    Group* groupname_exists = NULL;
-
-    User *user = NULL, *newmember;
-    Namelist *newgroup_entry;
-
-    char *newbuffer = buffer, *token;
-    int retval;
-
-    //Ensure the groupname is valid and does not already exist
-    token = strtok(buffer, ",");
-    sscanf(token, "!newgroup=%s", newgroup->groupname);
-
-    if(!name_is_valid(newgroup->groupname))
-    {
-        send_msg(current_client, "InvalidGroupName", 17);
-        free(newgroup);
-        return 0;
-    }
-
-    HASH_FIND_STR(groups, newgroup->groupname, groupname_exists);
-    if(groupname_exists)
-    {
-        printf("Group \"%s\" already exists.\n", newgroup->groupname);
-        send_msg(current_client, "InvalidGroupName", 17);
-        free(newgroup);
-        return 0;
-    }
-
-    //Register the group
-    HASH_ADD_STR(groups, groupname, newgroup);
-    
-
-    //Add each specified member into the group, starting with the group creator
-    token = current_client->username;
-    while(token)
-    {
-        HASH_FIND_STR(active_users, token, user);
-        if(!user)
-        {
-            printf("Could not find member \"%s\"\n", token);
-            token = strtok(NULL, ",");
-            continue;
-        }
-
-        printf("Adding member \"%s\" to group \"%s\"\n", token, newgroup->groupname);
-
-        newmember = malloc(sizeof(User));
-        strcpy(newmember->username, user->username);
-        newmember->c = user->c;
-        HASH_ADD_STR(newgroup->members, username, newmember);
-        ++newgroup->member_count;
-        
-        //Record the participation of this group for each user's client descriptors
-        newgroup_entry = calloc(1, sizeof(Namelist));
-        strcpy(newgroup_entry->name, newgroup->groupname);
-        LL_APPEND(user->c->groups_joined, newgroup_entry);
-
-        token = strtok(NULL, ",");
-    }
-
-    
-    //Tell each of the clients to join the group
-    sprintf(buffer, "!joingroup=%s", newgroup->groupname);
-    retval = send_group(newgroup, buffer, strlen(buffer)+1);
-
-    if(!retval)
-    {
-        printf("Unable to invite any members to the new group. Cancelling...\n");
-        free(newgroup);
-    }
-
-    return retval;
-}
-
-
 static inline int parse_client_command()
 {
     int bytes; 
 
     //If the client requested to close the connection
-    if(strncmp(buffer, "!register", 9) == 0)
+    if(strncmp(buffer, "!register:", 10) == 0)
     {  
         return register_client();
     }
@@ -541,6 +619,16 @@ static inline int parse_client_command()
     else if(strncmp(buffer, "!newgroup=", 10) == 0)
     {
         return create_new_group();
+    }
+
+    else if(strncmp(buffer, "!joingroup=", 11) == 0)
+    {
+        return join_group();
+    }
+
+    else if(strncmp(buffer, "!leavegroup=", 12) == 0)
+    {
+        return leave_group();
     }
 
     else

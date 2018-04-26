@@ -304,7 +304,8 @@ static inline int create_new_group()
     Namelist *newgroup_entry;
 
     char *newbuffer = buffer, *token;
-    int retval;
+    char invite_msg[BUFSIZE];
+    int invites_sent = 0;
 
     //Ensure the groupname is valid and does not already exist
     token = strtok(buffer, ",");
@@ -328,9 +329,9 @@ static inline int create_new_group()
 
     //Register the group
     HASH_ADD_STR(groups, groupname, newgroup);
-    
 
-    //Add each specified member into the group, starting with the group creator
+    //Invite each of the clients to join the group
+    sprintf(invite_msg, "!groupinvite=%s,sender=%s", newgroup->groupname, current_client->username);
     token = current_client->username;
     while(token)
     {
@@ -342,23 +343,20 @@ static inline int create_new_group()
             continue;
         }
 
-        join_group_direct(newgroup, target_user->c);
+        printf("Invited user \"%s\" to group \"%s\".\n", token, newgroup->groupname);
+        if(send_msg(target_user->c, invite_msg, strlen(invite_msg)+1))
+            ++invites_sent;
 
         token = strtok(NULL, ",");
     }
 
-    
-    //Tell each of the clients to join the group
-    sprintf(buffer, "!groupinvite=%s,sender=%s", newgroup->groupname, current_client->username);
-    retval = send_group(newgroup, buffer, strlen(buffer)+1);
-
-    if(!retval)
+    if(!invites_sent)
     {
         printf("Unable to invite any members to the new group. Cancelling...\n");
         free(newgroup);
     }
 
-    return retval;
+    return invites_sent;
 }
 
 

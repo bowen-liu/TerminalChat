@@ -266,14 +266,14 @@ static void user_online()
 //TODO: Maybe allow the user to choose to decline an invitation?
 static void group_invited()
 {
-    Namelist *groupname = malloc(sizeof(Namelist));
-    char invite_sender[USERNAME_LENG+1];
+    char group_name[USERNAME_LENG+1], invite_sender[USERNAME_LENG+1];
 
-    sscanf(buffer, "!groupinvite=%[^,],sender=%s", groupname->name, invite_sender);
-    printf("You have been added to the group \"%s\" by user \"%s\".\n", groupname->name, invite_sender);
+    sscanf(buffer, "!groupinvite=%[^,],sender=%s", group_name, invite_sender);
+    printf("You are being invited to the group \"%s\" by user \"%s\".\n", group_name, invite_sender);
 
-    //Record the invited group into the list of participating groups
-    LL_APPEND(groups_joined, groupname);
+    //Automatically accept it for now
+    sprintf(buffer, "!joingroup=%s", group_name);
+    send_msg(my_socketfd, buffer, strlen(buffer)+1);
 }
 
 static void group_joined()

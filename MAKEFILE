@@ -13,6 +13,7 @@ client.o: common.o
 
 main: server.o client.o
 	$(CC) -o a.out main.c common.o server.o client.o
+	rm -f *.o
 
 clean:
 	rm -f *.o a.out

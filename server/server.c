@@ -40,7 +40,7 @@ static void disconnect_client(Client *c)
     Group *group;
     
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
-        perror("Failed to unregister the disconnected client from epoll!\n");
+        perror("Failed to unregister the disconnected client from epoll!");
 
     close(c->socketfd);
 
@@ -278,7 +278,7 @@ static inline int group_msg()
         return 0;
     }
 
-    //Checks if t he sender is part of the group
+    //Checks if the sender is part of the group
     HASH_FIND_STR(target->members, current_client->username, sender_is_member);
     if(!sender_is_member)
     {
@@ -292,19 +292,15 @@ static inline int group_msg()
     return send_group(target, gmsg, strlen(gmsg)+1);
 }
 
-//!newgroup=eeee,abc,def
 
-static void join_group_direct(Group *group, Client *c);
+static int invite_to_group_direct(Group *group, User *user);
 static inline int create_new_group()
 {
     Group* newgroup = calloc(1, sizeof(Group));
     Group* groupname_exists = NULL;
 
-    User *target_user = NULL, *newmember;
-    Namelist *newgroup_entry;
-
     char *newbuffer = buffer, *token;
-    char invite_msg[BUFSIZE];
+    User *target_user = NULL;
     int invites_sent = 0;
 
     //Ensure the groupname is valid and does not already exist
@@ -331,7 +327,6 @@ static inline int create_new_group()
     HASH_ADD_STR(groups, groupname, newgroup);
 
     //Invite each of the clients to join the group
-    sprintf(invite_msg, "!groupinvite=%s,sender=%s", newgroup->groupname, current_client->username);
     token = current_client->username;
     while(token)
     {
@@ -343,8 +338,7 @@ static inline int create_new_group()
             continue;
         }
 
-        printf("Invited user \"%s\" to group \"%s\".\n", token, newgroup->groupname);
-        if(send_msg(target_user->c, invite_msg, strlen(invite_msg)+1))
+        if(invite_to_group_direct(newgroup, target_user))
             ++invites_sent;
 
         token = strtok(NULL, ",");
@@ -444,7 +438,6 @@ static void join_group_direct(Group *group, Client *c)
     //Now you must send a !groupinvite command to the new member
 }
 
-
 static int join_group()
 {
     Namelist *new_group_entry = calloc(1, sizeof(Namelist));
@@ -476,58 +469,85 @@ static int join_group()
     return 1;
 }
 
-static int invite_to_group()
+
+static int invite_to_group_direct(Group *group, User *user)
 {
-    char username[USERNAME_LENG+1];
-    Namelist *new_group_entry = calloc(1, sizeof(Namelist));
-    Group* group;
-    User* target_user;
+    char invite_msg[BUFSIZE];
+    User *already_in_group;
     
-    sscanf(buffer, "!invitegroup=%[^,],user=%s", new_group_entry->name, username);
-
-    //Locate this group in the hash table
-    HASH_FIND_STR(groups, new_group_entry->name, group);
-    if(!group)
-    {
-        printf("Group \"%s\" was not found.\n", new_group_entry->name);
-        send_msg(current_client, "InvalidGroup", 13);
-        free(new_group_entry);
-        return 0;
-    }
-
     //Check if this user is already in the group
-    HASH_FIND_STR(group->members, username, target_user);
-    if(target_user)
+    HASH_FIND_STR(group->members, user->username, already_in_group);
+    if(already_in_group)
     {
-        printf("User \"%s\" is already a member of the group \"%s\".\n", username, new_group_entry->name);
+        printf("User \"%s\" is already a member of the group \"%s\".\n", user->username, group->groupname);
         send_msg(current_client, "AlreadyExist", 13);
-        free(new_group_entry);
-        return 0;
-    }
-
-    //Locate the member to be Added
-    HASH_FIND_STR(active_users, username, target_user);
-    if(!target_user)
-    {
-        printf("User \"%s\" was not found.\n", username);
-        send_msg(current_client, "UserNotFound", 13);
-        free(new_group_entry);
         return 0;
     }
 
     //Announce to other existing members that a new member was invited
-    sprintf(buffer, "User \"%s\" has invited \"%s\" to join the group \"%s\"", current_client->username, username, group->groupname);
-    send_group(group, buffer, strlen(buffer)+1);
+    sprintf(invite_msg, "User \"%s\" has invited \"%s\" to join the group \"%s\"", current_client->username, user->username, group->groupname);
+    printf("%s\n", invite_msg);
+    send_group(group, invite_msg, strlen(invite_msg)+1);
 
-    //Add an entry to the client's groups_joined list
-    join_group_direct(group, target_user->c);
-
-    //Invite the requested member to join the group
-    sprintf(buffer, "!groupinvite=%s,sender=%s", new_group_entry->name, current_client->username);
-    if(!send_msg(target_user->c, buffer, strlen(buffer)+1))       //TODO: what if send failed?
+    //Send an invite to the requested user to join the group
+    sprintf(invite_msg, "!groupinvite=%s,sender=%s", group->groupname, current_client->username);
+    if(!send_msg(user->c, invite_msg, strlen(invite_msg)+1))
         return 0;
 
     return 1;
+}
+
+static int invite_to_group()
+{
+    char group_name[USERNAME_LENG+1];
+    char *newbuffer = buffer, *token;
+    Group* group;
+    User* target_user;
+    int users_invited = 0;
+    
+
+    token = strtok(newbuffer, ",");
+    sscanf(token, "!invitegroup=%[^,]", group_name);
+
+    //Locate the requested group in the hash table
+    HASH_FIND_STR(groups, group_name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", group_name);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+
+    //Check if the requesting user is a group member itself
+    HASH_FIND_STR(group->members, current_client->username, target_user);
+    if(!target_user)
+    {
+        printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Invite each member specified in the command
+    token = strtok(NULL, ",");
+    while(token)
+    {
+        //Locate the member to be Added
+        HASH_FIND_STR(active_users, token, target_user);
+        if(!target_user)
+        {
+            printf("User \"%s\" was not found.\n", token);
+            send_msg(current_client, "UserNotFound", 13);
+            return 0;
+        }
+
+        //Send an invitation to the user
+        if(invite_to_group_direct(group, target_user))
+            ++users_invited;
+
+        token = strtok(NULL, ",");
+    }
+
+    return users_invited;
 }
 
 

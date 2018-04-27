@@ -104,7 +104,7 @@ static unsigned int send_msg(Client *c, char* buffer, size_t size)
     bytes = send(c->socketfd, buffer, size, 0);
     if(bytes < 0)
     {
-        perror("Failed to send greeting message to client\n");
+        perror("Failed to send greeting message to client");
         disconnect_client(c);
         return 0;
     }
@@ -153,7 +153,7 @@ static void send_long_msg()
     //Check exit conditions
     if(bytes <= 0)
     {
-        perror("Failed to send long message\n");
+        perror("Failed to send long message");
         printf("Sent %zu\\%zu bytes to client \"%s\" before failure.\n", current_client->pending_processed, current_client->pending_size, current_client->username);
     }
     else
@@ -210,7 +210,7 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
     int bytes = recv(c->socketfd, buffer, BUFSIZE, 0);
     if(bytes < 0)
     {
-        perror("Failed to receive from client. Disconnecting...\n");
+        perror("Failed to receive from client. Disconnecting...");
         disconnect_client(c);
         return 0;
     }
@@ -786,16 +786,61 @@ static inline int register_client()
 
 static inline int userlist()
 {
-    char* userlist_msg = malloc(total_users * (USERNAME_LENG+1) + EXTRA_CHARS);
+    char* userlist_msg;
     size_t userlist_size = 0;
-    User *curr, *temp;
+    User *userlist, *curr, *temp;
+    int usercount;
+
+    char group_name[USERNAME_LENG+1];
+    Group *group = NULL;
+    User *is_a_member;
+
+    //Is the user requesting a userlist of a group, or a userlist of everyone online?
+    if(strncmp(buffer, "!userlist,group=", 16) == 0)
+    {
+        sscanf(buffer, "!userlist,group=%s", group_name);
+
+        //Check if this group exists
+        HASH_FIND_STR(groups, group_name, group);
+        if(!group)
+        {
+            printf("Group \"%s\" not found\n", group_name);
+            send_msg(current_client, "InvalidGroup", 13);
+            return 0;
+        }
+
+        //Check if the requesting user is a member
+        HASH_FIND_STR(group->members, current_client->username, is_a_member);
+        if(!is_a_member)
+        {
+            printf("User \"%s\" tried to get the userlist of the group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
+            send_msg(current_client, "NoPermission", 13);
+            return 0;
+        }
+
+        userlist = group->members;
+        usercount = group->member_count;
+    }
+    else
+    {
+        userlist = active_users;
+        usercount = total_users;
+    }
+
+
+    userlist_msg = malloc(usercount * (USERNAME_LENG+1) + EXTRA_CHARS);
 
     //Add command header to the beginning of the buffer
-    sprintf(userlist_msg, "!userlist=%d", total_users);
+    if(group)
+        sprintf(userlist_msg, "!userlist=%d,group=%s", usercount, group_name);
+    else
+        sprintf(userlist_msg, "!userlist=%d", usercount);
+    
     userlist_size = strlen(userlist_msg);
 
+
     //Iterate through the list of active usernames and append them to the buffer one at a time
-    HASH_ITER(hh, active_users, curr, temp)
+    HASH_ITER(hh, userlist, curr, temp)
     {
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
@@ -827,7 +872,7 @@ static inline int parse_client_command()
         return -1;
     }
 
-    else if(strcmp(buffer, "!userlist") == 0)
+    else if(strncmp(buffer, "!userlist", 9) == 0)
     {
         return userlist();
     }
@@ -915,7 +960,7 @@ static inline int handle_new_connection()
 
     if(new_client->socketfd < 0)
     {
-        perror("Error accepting client!\n");
+        perror("Error accepting client!");
         free(new_client);
         return 0;
     }
@@ -973,7 +1018,7 @@ static inline void server_main_loop()
         ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
         if(ready_count < 0)
         {
-            perror("epoll_wait failed!\n");
+            perror("epoll_wait failed!");
             return;
         }
 
@@ -1032,7 +1077,7 @@ void server(const char* ipaddr, const int port)
     epoll_fd = epoll_create1(0);
     if(epoll_fd < 0)
     {
-        perror("Failed to create epoll!\n");
+        perror("Failed to create epoll!");
         return;
     }
     
@@ -1040,7 +1085,7 @@ void server(const char* ipaddr, const int port)
     server_socketfd = socket(AF_INET, SOCK_STREAM, 0);
     if(server_socketfd < 0)
     {
-        perror("Error creating socket!\n");
+        perror("Error creating socket!");
         return;
     }
 
@@ -1053,7 +1098,7 @@ void server(const char* ipaddr, const int port)
 
     if(bind(server_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
-        perror("Failed to bind socket!\n");
+        perror("Failed to bind socket!");
         return;
     }
 
@@ -1070,7 +1115,7 @@ void server(const char* ipaddr, const int port)
     /*Begin listening for incoming connections on the server socket*/
     if(listen(server_socketfd, MAX_CONNECTION_BACKLOG) < 0)
     {
-        perror("Failed to listen to the socket!\n");
+        perror("Failed to listen to the socket!");
         return;
     }
 

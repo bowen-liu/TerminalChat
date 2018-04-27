@@ -50,7 +50,7 @@ static unsigned int send_msg(int socket, char* buffer, size_t size)
     bytes = send(socket, buffer, size, 0);
     if(bytes < 0)
     {
-        perror("Failed to sent message to the server...\n");
+        perror("Failed to sent message to the server...");
         return 0;
     }
 
@@ -62,12 +62,12 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
     int bytes = recv(socket, buffer, size, 0);
     if(bytes < 0)
     {
-        perror("Failed to receive message from server\n");
+        perror("Failed to receive message from server");
         return 0;
     }
     else if(bytes == 0)
     {
-        perror("Server has disconnected unexpectedly...\n");
+        perror("Server has disconnected unexpectedly...");
         return 0;
     }
 
@@ -108,15 +108,15 @@ static void recv_long_msg()
     //Check exit conditions
     if(bytes <= 0)
     {
-        perror("Failed to receive long message from server.\n");
+        perror("Failed to receive long message from server.");
         printf("%zu\\%zu bytes received before failure.\n", received_long, expected_long_size);
     }
     else
     {
         printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, &long_buffer[received_long-1]);
-        printf("Current Buffer: %.*s\n", (int)received_long, long_buffer);
 
         received_long += bytes;
+        printf("Current Buffer: %.*s\n", (int)received_long, long_buffer);
         printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
 
         //Has the entire message been received?
@@ -335,29 +335,43 @@ static void user_joined_group()
 
 static void parse_userlist()
 {
+    char group_name[USERNAME_LENG+1];
     char* newbuffer = buffer;
     char* token;
     Member *curr, *tmp;
-
-    //Delete the old hash table if it already exists
-    if(online_members)
-    {
-        HASH_ITER(hh, online_members, curr, tmp) 
-        {
-            HASH_DEL(online_members, curr);
-            free(curr);
-        }
-    }
 
     //Parse the header
     token = strtok(newbuffer, ",");
     if(!token)
         return;
     sscanf(token, "!userlist=%u", &users_online);
-    printf("%u users are currently online:\n", users_online);
 
-    //Extract each user's name
+    //Is the following token the name of a group?
     token = strtok(NULL, ",");
+    if(!token)
+        return;
+
+    if(strncmp(token, "group=", 6) == 0)
+    {
+        sscanf(token, "group=%[^,]", group_name);
+        printf("%u users are currently online in the group \"%s\":\n", users_online, group_name);
+    }
+    else
+    {
+        //If this is a new global userlist, delete the old userlist hash table if it already exists
+        if(online_members)
+        {
+            HASH_ITER(hh, online_members, curr, tmp) 
+            {
+                HASH_DEL(online_members, curr);
+                free(curr);
+            }
+        }
+
+        printf("%u users are currently online:\n", users_online);
+    }
+
+    //Extract each subsequent user's name
     while(token)
     {
         printf("%s\n", token);
@@ -370,9 +384,11 @@ static void parse_userlist()
 }
 
 
-static void parse_control_message(char* buffer)
+static void parse_control_message(char* cmd_buffer)
 {
-
+    char *old_buffer = buffer;
+    buffer = cmd_buffer;
+    
     if(strncmp("!useroffline=", buffer, 13) == 0)
         user_offline();
 
@@ -402,6 +418,8 @@ static void parse_control_message(char* buffer)
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);
+
+    buffer = old_buffer;
 }
 
 
@@ -423,7 +441,7 @@ static inline void client_main_loop()
         ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
         if(ready_count < 0)
         {
-            perror("epoll_wait failed!\n");
+            perror("epoll_wait failed!");
             return;
         }
 
@@ -496,7 +514,7 @@ void client(const char* ipaddr, const int port,  char *username)
     epoll_fd = epoll_create1(0);
     if(epoll_fd < 0)
     {
-        perror("Failed to create epoll!\n");
+        perror("Failed to create epoll!");
         return;
     }
 
@@ -504,7 +522,7 @@ void client(const char* ipaddr, const int port,  char *username)
     my_socketfd = socket(AF_INET, SOCK_STREAM, 0);
     if(my_socketfd < 0)
     {
-        perror("Error creating socket!\n");
+        perror("Error creating socket!");
         return;
     }
 
@@ -518,7 +536,7 @@ void client(const char* ipaddr, const int port,  char *username)
     //Connect to the server
     if(connect(my_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
-        perror("Error connecting to the server!\n");
+        perror("Error connecting to the server!");
         return;
     }
 

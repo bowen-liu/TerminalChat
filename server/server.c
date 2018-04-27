@@ -54,7 +54,7 @@ static void disconnect_client(Client *c)
         return;
     }
 
-    //Leave participating chat groups. TODO: Complete implementing this!
+    //Leave participating chat groups.
     LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
     {
         printf("Leaving group \"%s\"\n", current_group_name->name);
@@ -354,6 +354,20 @@ static inline int create_new_group()
 }
 
 
+static void remove_group(Group *group)
+{
+    unsigned int mcount = HASH_COUNT(group->members);
+    
+    if(mcount > 0)
+    {
+        printf("Cannot remove non-empty group \"%s\". (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
+        return;
+    }
+    HASH_DEL(groups, group);
+    free(group);
+}
+
+
 static int leave_group_direct(Group *group, Client *c)
 {
     char leavemsg[BUFSIZE];
@@ -374,6 +388,13 @@ static int leave_group_direct(Group *group, Client *c)
     printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
     send_group(group, leavemsg, strlen(leavemsg)+1);
 
+    //Delete this group if no members are remaining
+    if(group->member_count == 0)
+    {
+        printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
+        remove_group(group);
+    }
+        
     return 1;
 }
 
@@ -548,6 +569,96 @@ static int invite_to_group()
     }
 
     return users_invited;
+}
+
+
+static int kick_from_group()
+{
+    char group_name[USERNAME_LENG+1];
+    char kick_msg[BUFSIZE];
+    char *newbuffer = buffer, *token;
+    Group* group;
+    User* target_user;
+    Namelist *group_entry, *tmp;
+
+    token = strtok(newbuffer, ",");
+    sscanf(token, "!kickgroup=%[^,]", group_name);
+
+    //Locate the requested group in the hash table
+    HASH_FIND_STR(groups, group_name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", group_name);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+
+    //Check if the requesting user is a group member itself
+    HASH_FIND_STR(group->members, current_client->username, target_user);
+    if(!target_user)
+    {
+        printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Invite each member specified in the command
+    token = strtok(NULL, ",");
+    while(token)
+    {
+        //Locate the member to be kicked
+        HASH_FIND_STR(group->members, token, target_user);
+        if(!target_user)
+        {
+            printf("User \"%s\" was not found.\n", token);
+            send_msg(current_client, "UserNotFound", 13);
+            return 0;
+        }
+
+        //Remove the member from the group's member table
+        HASH_DEL(group->members, target_user);
+        --group->member_count;
+
+        //Find the entry in the client's group_joined list and remove the entry
+        LL_FOREACH_SAFE(target_user->c->groups_joined, group_entry, tmp)
+        {
+            if(strcmp(group_name, group_entry->name) == 0)
+                break;
+            else 
+                group_entry = NULL;
+        }
+
+        if(group_entry)
+        {
+            LL_DELETE(target_user->c->groups_joined, group_entry);
+            free(group_entry);
+        }
+            
+        else
+            printf("Group entry was not found in client's descriptor\n");
+
+        //Announce to other existing members that a new member was invited
+        sprintf(kick_msg, "User \"%s\" has been kicked by \"%s\" in group \"%s\"", target_user->username, current_client->username, group->groupname);
+        printf("%s\n", kick_msg);
+        send_group(group, kick_msg, strlen(kick_msg)+1);
+
+        //Send an invite to the requested user to join the group
+        sprintf(kick_msg, "!groupkicked=%s,by=%s", group->groupname, current_client->username);
+        send_msg(target_user->c, kick_msg, strlen(kick_msg)+1);
+        free(target_user);
+
+        token = strtok(NULL, ",");
+    }
+
+
+    //Delete this group if no members are remaining
+    if(group->member_count == 0)
+    {
+        printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
+        remove_group(group);
+    }
+
+    return 1;
 }
 
 
@@ -731,25 +842,20 @@ static inline int parse_client_command()
     }
 
     else if(strncmp(buffer, "!newgroup=", 10) == 0)
-    {
         return create_new_group();
-    }
 
     else if(strncmp(buffer, "!joingroup=", 11) == 0)
-    {
         return join_group();
-    }
 
     else if(strncmp(buffer, "!leavegroup=", 12) == 0)
-    {
         return leave_group();
-    }
 
     else if(strncmp(buffer, "!invitegroup=", 13) == 0)
-    {
         return invite_to_group();
-    }
 
+    else if(strncmp(buffer, "!kickgroup=", 11) == 0)
+        return kick_from_group();
+    
     else
     {
         printf("Invalid command \"%s\"\n", buffer);

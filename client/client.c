@@ -288,6 +288,33 @@ static void group_joined()
     LL_APPEND(groups_joined, groupname);
 }
 
+static void group_kicked()
+{
+    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1];
+    Namelist *current_group_name, *tmp;
+
+    sscanf(buffer, "!groupkicked=%[^,],by=%s", group_name, kicked_by);
+    printf("You have been kicked out of the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
+
+    //Find the entry in the client's group_joined list and remove the entry
+    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp)
+    {
+        if(strcmp(group_name, current_group_name->name) == 0)
+            break;
+        else 
+            current_group_name = NULL;
+    }
+
+    if(current_group_name)
+    {
+        LL_DELETE(groups_joined, current_group_name);
+        free(current_group_name);
+    }
+    else
+        printf("You do not appear to be a member of the group \"%s\".\n", group_name);
+}
+
+
 static void user_left_group()
 {
     char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
@@ -369,6 +396,9 @@ static void parse_control_message(char* buffer)
 
     else if(strncmp("!joinedgroup=", buffer, 13) == 0)
         user_joined_group();
+
+    else if(strncmp("!groupkicked=", buffer, 13) == 0)
+        group_kicked();
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);

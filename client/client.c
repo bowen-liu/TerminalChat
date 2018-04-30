@@ -351,14 +351,18 @@ static void parse_userlist()
     if(!token)
         return;
 
+    //This is a group userlist
     if(strncmp(token, "group=", 6) == 0)
     {
         sscanf(token, "group=%[^,]", group_name);
         printf("%u users are currently online in the group \"%s\":\n", users_online, group_name);
+        token = strtok(NULL, ",");
     }
+
+    //This is a global userlist
     else
     {
-        //If this is a new global userlist, delete the old userlist hash table if it already exists
+        //Delete the old global userlist if it already exists
         if(online_members)
         {
             HASH_ITER(hh, online_members, curr, tmp) 
@@ -367,7 +371,6 @@ static void parse_userlist()
                 free(curr);
             }
         }
-
         printf("%u users are currently online:\n", users_online);
     }
 

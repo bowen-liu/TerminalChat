@@ -235,10 +235,14 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 static unsigned int send_group(Group* group, char* buffer, size_t size)
 {
     unsigned int members_sent = 0;
-    User *curr = NULL, *tmp;
+    Group_Member *curr = NULL, *tmp;
 
     HASH_ITER(hh, group->members, curr, tmp) 
     {
+        //Do not send if the current member was invited but hasn't joined the group 
+        if(!(curr->permissions & GRP_PERM_HAS_JOINED))
+            continue;
+        
         if(!send_msg(curr->c, buffer, size))
             printf("Send failed to user \"%s\" in group \"%s\"\n", curr->username, group->groupname);
         else
@@ -254,7 +258,7 @@ static inline int group_msg()
     char *target_msg;
     char gmsg[MAX_MSG_LENG];
     Group *target;
-    User *sender_is_member;
+    Group_Member *sending_member;
 
     //Find the occurance of the first space
     target_msg = strchr(buffer, ' ');
@@ -278,11 +282,17 @@ static inline int group_msg()
         return 0;
     }
 
-    //Checks if the sender is part of the group
-    HASH_FIND_STR(target->members, current_client->username, sender_is_member);
-    if(!sender_is_member)
+    //Checks if the sender is part of the group, or has enough permission to send group messages
+    HASH_FIND_STR(target->members, current_client->username, sending_member);
+    if(!sending_member)
     {
         printf("User \"%s\" is not a member of \"%s\"\n", current_client->username, target_group);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+    else if((sending_member->permissions & (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK)) != (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK))
+    {
+        printf("User \"%s\" do not have permission to message group \"%s\"\n", current_client->username, target_group);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
@@ -293,7 +303,32 @@ static inline int group_msg()
 }
 
 
-static int invite_to_group_direct(Group *group, User *user);
+static void remove_group(Group *group)
+{
+    unsigned int mcount = HASH_COUNT(group->members), rcount = 0;
+
+    Group_Member *curr = NULL, *tmp;
+    
+    if(mcount > 0)
+    {
+        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
+        
+        //Remove any remaining member objects
+        HASH_ITER(hh, group->members, curr, tmp) 
+        {
+            printf("Removing unused invite for user \"%s\".", curr->username);
+            free(curr);
+            ++rcount;
+        }
+        printf("Removed %u unresponded invites from group \"%s\"", rcount, group->groupname);
+    }
+
+    HASH_DEL(groups, group);
+    free(group);
+}
+
+
+static int invite_to_group_direct(Group *group, User *user, Group_Member *invitation);
 static inline int create_new_group()
 {
     Group* newgroup = calloc(1, sizeof(Group));
@@ -301,6 +336,7 @@ static inline int create_new_group()
 
     char *newbuffer = buffer, *token;
     User *target_user = NULL;
+    Group_Member *newmember;
     int invites_sent = 0;
 
     //Ensure the groupname is valid and does not already exist
@@ -338,7 +374,13 @@ static inline int create_new_group()
             continue;
         }
 
-        if(invite_to_group_direct(newgroup, target_user))
+        //Record an invite for each initial member, and mark them as admins
+        newmember = calloc(1, sizeof(Group_Member));
+        strcpy(newmember->username, target_user->username);
+        newmember->c = target_user->c;
+        newmember->permissions = GRP_PERM_ADMIN;
+        
+        if(invite_to_group_direct(newgroup, target_user, newmember))
             ++invites_sent;
 
         token = strtok(NULL, ",");
@@ -347,46 +389,41 @@ static inline int create_new_group()
     if(!invites_sent)
     {
         printf("Unable to invite any members to the new group. Cancelling...\n");
-        free(newgroup);
+        remove_group(newgroup);
     }
 
     return invites_sent;
 }
 
 
-static void remove_group(Group *group)
-{
-    unsigned int mcount = HASH_COUNT(group->members);
-    
-    if(mcount > 0)
-    {
-        printf("Cannot remove non-empty group \"%s\". (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
-        return;
-    }
-    HASH_DEL(groups, group);
-    free(group);
-}
-
-
 static int leave_group_direct(Group *group, Client *c)
 {
     char leavemsg[BUFSIZE];
-    User* target_user;
+    Group_Member* target_member;
+    int has_joined;
     
-    HASH_FIND_STR(group->members, c->username, target_user);
-    if(!target_user)
+    HASH_FIND_STR(group->members, c->username, target_member);
+    if(!target_member)
     {
         printf("Leave: User \"%s\" not found in group \"%s\".\n", c->username, group->groupname);
         return 0;
     }
 
-    HASH_DEL(group->members, target_user);
-    --group->member_count;
-    free(target_user);
+    has_joined = target_member->permissions & GRP_PERM_HAS_JOINED;
+    HASH_DEL(group->members, target_member);
+    free(target_member);
 
-    sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
-    printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
-    send_group(group, leavemsg, strlen(leavemsg)+1);
+    //No need to announce member leaving if the member never joined the group (unresponded invite)
+    if(has_joined)
+    {
+        --group->member_count;
+
+        sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
+        printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
+        send_group(group, leavemsg, strlen(leavemsg)+1);
+    }
+    else
+        printf("User \"%s\"'s unresponded invite has been removed from the group \"%s\".\n", c->username, group->groupname);
 
     //Delete this group if no members are remaining
     if(group->member_count == 0)
@@ -439,44 +476,74 @@ static int leave_group()
 }
 
 
-static void join_group_direct(Group *group, Client *c)
+static void join_group_direct(Group *group, Client *c, Group_Member *invitation)
 {
-    User *newmember = malloc(sizeof(User));
+    Group_Member *newmember;
     Namelist *newgroup_entry;
 
-    strcpy(newmember->username, c->username);
-    newmember->c = c;
-    HASH_ADD_STR(group->members, c->username, newmember);
-    ++group->member_count;
+    if(!invitation)
+    {
+        newmember = calloc(1, sizeof(Group_Member));
+        strcpy(newmember->username, c->username);
+        newmember->c = c;
+        newmember->permissions = GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT;
+    }
+    else
+        newmember = invitation;
     
-    //Record the participation of this group for each user's client descriptors
+    HASH_ADD_STR(group->members, c->username, newmember);
+
+    if(newmember->permissions & GRP_PERM_HAS_JOINED)
+    {
+        printf("Added member \"%s\" to group \"%s\" %s\n", c->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
+        ++group->member_count;
+    }
+    else
+        printf("Preallocated member \"%s\" to group \"%s\" %s\n", c->username, group->groupname, (newmember->permissions == GRP_PERM_ADMIN)? "as an admin":"");
+ 
+    //Record the participation of this group for the member's client descriptors
     newgroup_entry = calloc(1, sizeof(Namelist));
     strcpy(newgroup_entry->name, group->groupname);
     LL_APPEND(c->groups_joined, newgroup_entry);
-
-    printf("Added member \"%s\" to group \"%s\"\n", c->username, group->groupname);
 
     //Now you must send a !groupinvite command to the new member
 }
 
 static int join_group()
 {
-    Namelist *new_group_entry = calloc(1, sizeof(Namelist));
+    char grope_name[USERNAME_LENG+1];
     Group *group;
+    Group_Member *member_exists = NULL;
     
-    sscanf(buffer, "!joingroup=%s", new_group_entry->name);
+    sscanf(buffer, "!joingroup=%s", grope_name);
 
     //Locate this group in the hash table
-    HASH_FIND_STR(groups, new_group_entry->name, group);
+    HASH_FIND_STR(groups, grope_name, group);
     if(!group)
     {
-        printf("Group \"%s\" was not found.\n", new_group_entry->name);
+        printf("Group \"%s\" was not found.\n", grope_name);
         send_msg(current_client, "InvalidGroup", 13);
         return 0;
     }
 
+    //Check if a member entry already exists in this group
+    HASH_FIND_STR(group->members, current_client->username, member_exists);
+    if(member_exists)
+    {
+        if(member_exists->permissions & GRP_PERM_HAS_JOINED)
+        {
+            printf("User \"%s\" is already a member of the group \"%s\". Permission: %d\n", current_client->username, group->groupname, member_exists->permissions);
+            send_msg(current_client, "AlreadyExist", 13);
+            return 0;
+        }
+        
+        //User has not joined the group yet, and was previously invited
+        printf("User \"%s\" has a pending invitation to the group \"%s\".\n", current_client->username, group->groupname);
+        member_exists->permissions |= GRP_PERM_HAS_JOINED;
+    }
+
     //Add an entry to the client's groups_joined list
-    join_group_direct(group, current_client);
+    join_group_direct(group, current_client, member_exists);
 
     //Inform the new member that the join was sucessful
     sprintf(buffer, "!groupjoined=%s", group->groupname);
@@ -491,10 +558,11 @@ static int join_group()
 }
 
 
-static int invite_to_group_direct(Group *group, User *user)
+static int invite_to_group_direct(Group *group, User *user, Group_Member *invitation)
 {
     char invite_msg[BUFSIZE];
-    User *already_in_group;
+    Group_Member *already_in_group;
+    Namelist *newgroup_entry;
     
     //Check if this user is already in the group
     HASH_FIND_STR(group->members, user->username, already_in_group);
@@ -505,8 +573,14 @@ static int invite_to_group_direct(Group *group, User *user)
         return 0;
     }
 
+    //If an invitation was already made, add the target to the member list in advance
+    //The GRP_PERM_HAS_JOINED permission flag was not set, so the member still has not technically joined. This just allocates the datastructures needed
+    if(invitation)
+        join_group_direct(group, user->c, invitation);   
+
+
     //Announce to other existing members that a new member was invited
-    sprintf(invite_msg, "User \"%s\" has invited \"%s\" to join the group \"%s\"", current_client->username, user->username, group->groupname);
+    sprintf(invite_msg, "User \"%s\" has been invited \"%s\" to join the group \"%s\"", current_client->username, user->username, group->groupname);
     printf("%s\n", invite_msg);
     send_group(group, invite_msg, strlen(invite_msg)+1);
 
@@ -523,6 +597,7 @@ static int invite_to_group()
     char group_name[USERNAME_LENG+1];
     char *newbuffer = buffer, *token;
     Group* group;
+    Group_Member* is_member;
     User* target_user;
     int users_invited = 0;
     
@@ -540,8 +615,8 @@ static int invite_to_group()
     }
 
     //Check if the requesting user is a group member itself
-    HASH_FIND_STR(group->members, current_client->username, target_user);
-    if(!target_user)
+    HASH_FIND_STR(group->members, current_client->username, is_member);
+    if(!is_member)
     {
         printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
         send_msg(current_client, "NoPermission", 13);
@@ -562,7 +637,7 @@ static int invite_to_group()
         }
 
         //Send an invitation to the user
-        if(invite_to_group_direct(group, target_user))
+        if(invite_to_group_direct(group, target_user, NULL))
             ++users_invited;
 
         token = strtok(NULL, ",");
@@ -578,7 +653,7 @@ static int kick_from_group()
     char kick_msg[BUFSIZE];
     char *newbuffer = buffer, *token;
     Group* group;
-    User* target_user;
+    Group_Member* target_member;
     Namelist *group_entry, *tmp;
 
     token = strtok(newbuffer, ",");
@@ -594,8 +669,8 @@ static int kick_from_group()
     }
 
     //Check if the requesting user is a group member itself
-    HASH_FIND_STR(group->members, current_client->username, target_user);
-    if(!target_user)
+    HASH_FIND_STR(group->members, current_client->username, target_member);
+    if(!target_member)
     {
         printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
         send_msg(current_client, "NoPermission", 13);
@@ -607,8 +682,8 @@ static int kick_from_group()
     while(token)
     {
         //Locate the member to be kicked
-        HASH_FIND_STR(group->members, token, target_user);
-        if(!target_user)
+        HASH_FIND_STR(group->members, token, target_member);
+        if(!target_member)
         {
             printf("User \"%s\" was not found.\n", token);
             send_msg(current_client, "UserNotFound", 13);
@@ -616,11 +691,11 @@ static int kick_from_group()
         }
 
         //Remove the member from the group's member table
-        HASH_DEL(group->members, target_user);
+        HASH_DEL(group->members, target_member);
         --group->member_count;
 
         //Find the entry in the client's group_joined list and remove the entry
-        LL_FOREACH_SAFE(target_user->c->groups_joined, group_entry, tmp)
+        LL_FOREACH_SAFE(target_member->c->groups_joined, group_entry, tmp)
         {
             if(strcmp(group_name, group_entry->name) == 0)
                 break;
@@ -630,7 +705,7 @@ static int kick_from_group()
 
         if(group_entry)
         {
-            LL_DELETE(target_user->c->groups_joined, group_entry);
+            LL_DELETE(target_member->c->groups_joined, group_entry);
             free(group_entry);
         }
             
@@ -638,14 +713,14 @@ static int kick_from_group()
             printf("Group entry was not found in client's descriptor\n");
 
         //Announce to other existing members that a new member was invited
-        sprintf(kick_msg, "User \"%s\" has been kicked by \"%s\" in group \"%s\"", target_user->username, current_client->username, group->groupname);
+        sprintf(kick_msg, "User \"%s\" has been kicked by \"%s\" in group \"%s\"", target_member->username, current_client->username, group->groupname);
         printf("%s\n", kick_msg);
         send_group(group, kick_msg, strlen(kick_msg)+1);
 
         //Send an invite to the requested user to join the group
         sprintf(kick_msg, "!groupkicked=%s,by=%s", group->groupname, current_client->username);
-        send_msg(target_user->c, kick_msg, strlen(kick_msg)+1);
-        free(target_user);
+        send_msg(target_member->c, kick_msg, strlen(kick_msg)+1);
+        free(target_member);
 
         token = strtok(NULL, ",");
     }
@@ -783,76 +858,96 @@ static inline int register_client()
     return 1;
 }
 
+static inline int userlist_group(char *group_name)
+{
+    char* userlist_msg;
+    size_t userlist_size = 0;
+
+    Group *group = NULL;
+    Group_Member *is_member;
+    Group_Member *curr, *temp;
+
+    printf("userlist_group()\n");
+    
+    //Check if this group exists
+    HASH_FIND_STR(groups, group_name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" not found\n", group_name);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+
+    //Check if the requesting user is a member
+    HASH_FIND_STR(group->members, current_client->username, is_member);
+    if(!is_member)
+    {
+        printf("User \"%s\" tried to get the userlist of the group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + EXTRA_CHARS));
+    sprintf(userlist_msg, "!userlist=%d,group=%s", group->member_count, group_name);
+    printf("%s\n", userlist_msg);
+
+    //Iterate through the list of active usernames and append them to the buffer one at a time
+    HASH_ITER(hh, group->members, curr, temp)
+    {
+        printf("current group member: %s\n", curr->username);
+        
+        strcat(userlist_msg, ",");
+        strcat(userlist_msg, curr->username);
+
+        if(curr->permissions & GRP_PERM_ADMIN)
+            strcat(userlist_msg, " (admin)");
+        
+        if(!(curr->permissions & GRP_PERM_HAS_JOINED))
+            strcat(userlist_msg, " (invited)");
+    }
+    userlist_size = strlen(userlist_msg) + 1;
+    userlist_msg[userlist_size] = '\0';
+    
+    printf("%s\n", userlist_msg);
+    send_new_long_msg(userlist_msg, userlist_size);
+    free(userlist_msg);
+
+    return group->member_count;
+}
+
 
 static inline int userlist()
 {
     char* userlist_msg;
     size_t userlist_size = 0;
     User *userlist, *curr, *temp;
-    int usercount;
 
     char group_name[USERNAME_LENG+1];
-    Group *group = NULL;
-    User *is_a_member;
 
     //Is the user requesting a userlist of a group, or a userlist of everyone online?
     if(strncmp(buffer, "!userlist,group=", 16) == 0)
     {
         sscanf(buffer, "!userlist,group=%s", group_name);
-
-        //Check if this group exists
-        HASH_FIND_STR(groups, group_name, group);
-        if(!group)
-        {
-            printf("Group \"%s\" not found\n", group_name);
-            send_msg(current_client, "InvalidGroup", 13);
-            return 0;
-        }
-
-        //Check if the requesting user is a member
-        HASH_FIND_STR(group->members, current_client->username, is_a_member);
-        if(!is_a_member)
-        {
-            printf("User \"%s\" tried to get the userlist of the group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
-            send_msg(current_client, "NoPermission", 13);
-            return 0;
-        }
-
-        userlist = group->members;
-        usercount = group->member_count;
-    }
-    else
-    {
-        userlist = active_users;
-        usercount = total_users;
+        return userlist_group(group_name);
     }
 
-
-    userlist_msg = malloc(usercount * (USERNAME_LENG+1) + EXTRA_CHARS);
-
-    //Add command header to the beginning of the buffer
-    if(group)
-        sprintf(userlist_msg, "!userlist=%d,group=%s", usercount, group_name);
-    else
-        sprintf(userlist_msg, "!userlist=%d", usercount);
-    
+    userlist_msg = malloc(total_users * (USERNAME_LENG+1 + EXTRA_CHARS));
+    sprintf(userlist_msg, "!userlist=%d", total_users);
     userlist_size = strlen(userlist_msg);
 
-
     //Iterate through the list of active usernames and append them to the buffer one at a time
-    HASH_ITER(hh, userlist, curr, temp)
+    HASH_ITER(hh, active_users, curr, temp)
     {
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
-        userlist_size += strlen(curr->username) + 1;
     }
+    userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
-    ++userlist_size;
     
     send_new_long_msg(userlist_msg, userlist_size);
     free(userlist_msg);
 
-    return 1;
+    return total_users;
 }
 
 static inline int parse_client_command()

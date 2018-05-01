@@ -39,6 +39,7 @@ void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 int update_epoll_events(int epoll_fd, int socketfd, int event_flags);
 int name_is_valid(char* username);
+Namelist* find_from_namelist(Namelist* list, char *name);
 
 
 #endif

@@ -303,30 +303,6 @@ static inline int group_msg()
 }
 
 
-static void remove_group(Group *group)
-{
-    unsigned int mcount = HASH_COUNT(group->members), rcount = 0;
-
-    Group_Member *curr = NULL, *tmp;
-    
-    if(mcount > 0)
-    {
-        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
-        
-        //Remove any remaining member objects
-        HASH_ITER(hh, group->members, curr, tmp) 
-        {
-            printf("Removing unused invite for user \"%s\".", curr->username);
-            free(curr);
-            ++rcount;
-        }
-        printf("Removed %u unresponded invites from group \"%s\"", rcount, group->groupname);
-    }
-
-    HASH_DEL(groups, group);
-    free(group);
-}
-
 static Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions)
 {
     Group_Member *newmember;
@@ -347,6 +323,42 @@ static Group_Member* allocate_group_member(Group *group, Client *target_user, in
     LL_APPEND(target_user->groups_joined, newgroup_entry);
 
     //The member's associated Group_Member and Namelist objects must be freed when the member leaves the group!!
+}
+
+
+static void remove_group(Group *group)
+{
+    unsigned int mcount = HASH_COUNT(group->members), rcount = 0;
+
+    Group_Member *curr = NULL, *tmp;
+    Namelist *groupname_entry;
+    
+    if(mcount > 0)
+    {
+        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
+        
+        //Remove any remaining member objects
+        HASH_ITER(hh, group->members, curr, tmp) 
+        {
+            printf("Removing unused invite for user \"%s\".\n", curr->username);
+
+            groupname_entry = find_from_namelist(curr->c->groups_joined, group->groupname);
+            if(groupname_entry)
+            {
+                LL_DELETE(curr->c->groups_joined, groupname_entry);
+                free(groupname_entry);
+            }
+            else
+                printf("Group entry was not found in client's descriptor\n");
+
+            free(curr);
+            ++rcount;
+        }
+        printf("Removed %u unresponded invites from group \"%s\"\n", rcount, group->groupname);
+    }
+
+    HASH_DEL(groups, group);
+    free(group);
 }
 
 
@@ -456,7 +468,7 @@ static int leave_group_direct(Group *group, Client *c)
 static int leave_group()
 {
     char groupname[USERNAME_LENG+1];
-    Namelist *current_group_name, *tmp_name;
+    Namelist *groupname_entry;
     Group *group;
 
     sscanf(buffer, "!leavegroup=%s", groupname);
@@ -471,23 +483,16 @@ static int leave_group()
     }
     
     //Find the entry in the client's group_joined list and remove the entry
-    LL_FOREACH_SAFE(current_client->groups_joined, current_group_name, tmp_name)
-    {
-        if(strcmp(groupname, current_group_name->name) == 0)
-            break;
-        else 
-            current_group_name = NULL;
-    }
-
-    if(!current_group_name)
+    groupname_entry = find_from_namelist(current_client->groups_joined, groupname);
+    if(!groupname_entry)
     {
         printf("Leave: User \"%s\" not found in group \"%s\" (by joined_groups).\n", current_client->username, groupname);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
 
-    LL_DELETE(current_client->groups_joined, current_group_name);
-    free(current_group_name);
+    LL_DELETE(current_client->groups_joined, groupname_entry);
+    free(groupname_entry);
 
     //Leave the group officially
     return leave_group_direct(group, current_client);
@@ -635,7 +640,7 @@ static int kick_from_group()
     char *newbuffer = buffer, *token;
     Group* group;
     Group_Member* target_member;
-    Namelist *group_entry, *tmp;
+    Namelist *group_entry;
 
     token = strtok(newbuffer, ",");
     sscanf(token, "!kickgroup=%[^,]", group_name);
@@ -653,12 +658,20 @@ static int kick_from_group()
     HASH_FIND_STR(group->members, current_client->username, target_member);
     if(!target_member)
     {
-        printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
+        printf("User \"%s\" tried to kick users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
 
-    //Invite each member specified in the command
+    //Check if the requesting user has suffice permissions to kick others
+    if(!(target_member->permissions & GRP_PERM_CAN_KICK))
+    {
+        printf("User \"%s\" tried to invite users to group \"%s\", but the user does not have the permission.\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Kick each member specified in the command
     token = strtok(NULL, ",");
     while(token)
     {
@@ -676,22 +689,15 @@ static int kick_from_group()
         --group->member_count;
 
         //Find the entry in the client's group_joined list and remove the entry
-        LL_FOREACH_SAFE(target_member->c->groups_joined, group_entry, tmp)
-        {
-            if(strcmp(group_name, group_entry->name) == 0)
-                break;
-            else 
-                group_entry = NULL;
-        }
-
+        group_entry = find_from_namelist(target_member->c->groups_joined, group_name);
         if(group_entry)
         {
             LL_DELETE(target_member->c->groups_joined, group_entry);
             free(group_entry);
         }
-            
         else
             printf("Group entry was not found in client's descriptor\n");
+        
 
         //Announce to other existing members that a new member was invited
         sprintf(kick_msg, "User \"%s\" has been kicked by \"%s\" in group \"%s\"", target_member->username, current_client->username, group->groupname);
@@ -880,7 +886,7 @@ static inline int userlist_group(char *group_name)
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
 
-        if(curr->permissions & GRP_PERM_ADMIN)
+        if((curr->permissions & GRP_PERM_ADMIN) == GRP_PERM_ADMIN)
             strcat(userlist_msg, " (admin)");
         
         if(!(curr->permissions & GRP_PERM_HAS_JOINED))

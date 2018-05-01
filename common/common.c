@@ -75,3 +75,19 @@ int name_is_valid(char* username)
 
     return 1;
 }
+
+
+Namelist* find_from_namelist(Namelist* list, char *name)
+{
+    Namelist *curr, *tmp;
+
+    LL_FOREACH_SAFE(list, curr, tmp)
+    {
+        if(strcmp(curr->name, name) == 0)
+            break;
+        else
+            curr = NULL;
+    }
+
+    return curr;
+}

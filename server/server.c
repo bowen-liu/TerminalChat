@@ -57,7 +57,7 @@ static void disconnect_client(Client *c)
     //Leave participating chat groups.
     LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
     {
-        printf("Leaving group \"%s\"\n", current_group_name->name);
+        printf("Disconnect: Leaving group \"%s\"\n", current_group_name->name);
         HASH_FIND_STR(groups, current_group_name->name, group);
 
         if(group)
@@ -327,8 +327,30 @@ static void remove_group(Group *group)
     free(group);
 }
 
+static Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions)
+{
+    Group_Member *newmember;
+    Namelist *newgroup_entry;
 
-static int invite_to_group_direct(Group *group, User *user, Group_Member *invitation);
+    //Allocate a new Group Member object
+    newmember = calloc(1, sizeof(Group_Member));
+    strcpy(newmember->username, target_user->username);
+    newmember->c = target_user;
+    newmember->permissions = permissions;
+
+    //Add the new user's entry to the group's userlist
+    HASH_ADD_STR(group->members, c->username, newmember);
+
+    //Record the participation of this group for the member's client descriptors
+    newgroup_entry = calloc(1, sizeof(Namelist));
+    strcpy(newgroup_entry->name, group->groupname);
+    LL_APPEND(target_user->groups_joined, newgroup_entry);
+
+    //The member's associated Group_Member and Namelist objects must be freed when the member leaves the group!!
+}
+
+
+static int invite_to_group_direct(Group *group, User *user);
 static inline int create_new_group()
 {
     Group* newgroup = calloc(1, sizeof(Group));
@@ -336,7 +358,6 @@ static inline int create_new_group()
 
     char *newbuffer = buffer, *token;
     User *target_user = NULL;
-    Group_Member *newmember;
     int invites_sent = 0;
 
     //Ensure the groupname is valid and does not already exist
@@ -375,12 +396,9 @@ static inline int create_new_group()
         }
 
         //Record an invite for each initial member, and mark them as admins
-        newmember = calloc(1, sizeof(Group_Member));
-        strcpy(newmember->username, target_user->username);
-        newmember->c = target_user->c;
-        newmember->permissions = GRP_PERM_ADMIN;
+        allocate_group_member(newgroup, target_user->c, GRP_PERM_ADMIN);
         
-        if(invite_to_group_direct(newgroup, target_user, newmember))
+        if(invite_to_group_direct(newgroup, target_user))
             ++invites_sent;
 
         token = strtok(NULL, ",");
@@ -476,74 +494,43 @@ static int leave_group()
 }
 
 
-static void join_group_direct(Group *group, Client *c, Group_Member *invitation)
-{
-    Group_Member *newmember;
-    Namelist *newgroup_entry;
-
-    if(!invitation)
-    {
-        newmember = calloc(1, sizeof(Group_Member));
-        strcpy(newmember->username, c->username);
-        newmember->c = c;
-        newmember->permissions = GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT;
-    }
-    else
-        newmember = invitation;
-    
-    HASH_ADD_STR(group->members, c->username, newmember);
-
-    if(newmember->permissions & GRP_PERM_HAS_JOINED)
-    {
-        printf("Added member \"%s\" to group \"%s\" %s\n", c->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
-        ++group->member_count;
-    }
-    else
-        printf("Preallocated member \"%s\" to group \"%s\" %s\n", c->username, group->groupname, (newmember->permissions == GRP_PERM_ADMIN)? "as an admin":"");
- 
-    //Record the participation of this group for the member's client descriptors
-    newgroup_entry = calloc(1, sizeof(Namelist));
-    strcpy(newgroup_entry->name, group->groupname);
-    LL_APPEND(c->groups_joined, newgroup_entry);
-
-    //Now you must send a !groupinvite command to the new member
-}
-
 static int join_group()
 {
-    char grope_name[USERNAME_LENG+1];
+    char group_name[USERNAME_LENG+1];
     Group *group;
-    Group_Member *member_exists = NULL;
+    Group_Member *newmember = NULL;
     
-    sscanf(buffer, "!joingroup=%s", grope_name);
+    sscanf(buffer, "!joingroup=%s", group_name);
 
     //Locate this group in the hash table
-    HASH_FIND_STR(groups, grope_name, group);
+    HASH_FIND_STR(groups, group_name, group);
     if(!group)
     {
-        printf("Group \"%s\" was not found.\n", grope_name);
+        printf("Group \"%s\" was not found.\n", group_name);
         send_msg(current_client, "InvalidGroup", 13);
         return 0;
     }
 
     //Check if a member entry already exists in this group
-    HASH_FIND_STR(group->members, current_client->username, member_exists);
-    if(member_exists)
+    HASH_FIND_STR(group->members, current_client->username, newmember);
+    if(newmember)
     {
-        if(member_exists->permissions & GRP_PERM_HAS_JOINED)
+        if(newmember->permissions & GRP_PERM_HAS_JOINED)
         {
-            printf("User \"%s\" is already a member of the group \"%s\". Permission: %d\n", current_client->username, group->groupname, member_exists->permissions);
+            printf("User \"%s\" is already a member of the group \"%s\". Permission: %d\n", current_client->username, group->groupname, newmember->permissions);
             send_msg(current_client, "AlreadyExist", 13);
             return 0;
         }
         
-        //User has not joined the group yet, and was previously invited
+        //User has not joined the group yet, but has an invite reserved. Add the user directly to the group's userlist
         printf("User \"%s\" has a pending invitation to the group \"%s\".\n", current_client->username, group->groupname);
-        member_exists->permissions |= GRP_PERM_HAS_JOINED;
+        newmember->permissions |= GRP_PERM_HAS_JOINED;
     }
+    else
+        newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
 
-    //Add an entry to the client's groups_joined list
-    join_group_direct(group, current_client, member_exists);
+    printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
+    ++group->member_count;
 
     //Inform the new member that the join was sucessful
     sprintf(buffer, "!groupjoined=%s", group->groupname);
@@ -558,7 +545,7 @@ static int join_group()
 }
 
 
-static int invite_to_group_direct(Group *group, User *user, Group_Member *invitation)
+static int invite_to_group_direct(Group *group, User *user)
 {
     char invite_msg[BUFSIZE];
     Group_Member *already_in_group;
@@ -566,18 +553,12 @@ static int invite_to_group_direct(Group *group, User *user, Group_Member *invita
     
     //Check if this user is already in the group
     HASH_FIND_STR(group->members, user->username, already_in_group);
-    if(already_in_group)
+    if(already_in_group && (already_in_group->permissions & GRP_PERM_HAS_JOINED))
     {
         printf("User \"%s\" is already a member of the group \"%s\".\n", user->username, group->groupname);
         send_msg(current_client, "AlreadyExist", 13);
         return 0;
     }
-
-    //If an invitation was already made, add the target to the member list in advance
-    //The GRP_PERM_HAS_JOINED permission flag was not set, so the member still has not technically joined. This just allocates the datastructures needed
-    if(invitation)
-        join_group_direct(group, user->c, invitation);   
-
 
     //Announce to other existing members that a new member was invited
     sprintf(invite_msg, "User \"%s\" has been invited \"%s\" to join the group \"%s\"", current_client->username, user->username, group->groupname);
@@ -637,7 +618,7 @@ static int invite_to_group()
         }
 
         //Send an invitation to the user
-        if(invite_to_group_direct(group, target_user, NULL))
+        if(invite_to_group_direct(group, target_user))
             ++users_invited;
 
         token = strtok(NULL, ",");

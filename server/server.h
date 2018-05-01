@@ -1,84 +1,27 @@
 #ifndef _SERVER_H_
 #define _SERVER_H_
 
-#include "../common/common.h"     
 
-struct namelist;
+/*Shared Server Variables*/
 
-//Abstracts each active client participating in the server
-typedef struct {
-    
-    /*Connection info*/
-    int socketfd;                        //Key used for the main active client hash table
-    struct sockaddr_in sockaddr;
-    int sockaddr_leng;
+extern int server_socketfd;
+extern struct sockaddr_in server_addr;
 
-    /*Userinfo*/
-    char username[USERNAME_LENG+1];
+extern char *buffer;
+extern size_t buffer_size;
 
-    /*Other data*/
-    char* pending_buffer;
-    size_t pending_size;
-    size_t pending_processed;
+extern Client *active_connections;                  //Hashtable of all active client sockets (key = socketfd)
+extern User *active_users;                          //Hashtable of all active users (key = username), mapped to their client descriptors
+extern Group* groups;                               //Hashtable of all user created private chatrooms (key = groupname)
+extern unsigned int total_users;    
 
-    /**/
-    struct namelist *groups_joined;
-
-    UT_hash_handle hh;
-} Client;
+extern Client *current_client;                      //Descriptor for the client being serviced right now
 
 
-//Maps a username to a client object
-typedef struct {
-    char username[USERNAME_LENG+1];
-    Client *c;
-    UT_hash_handle hh;
-} User;
+/*Send/recv*/
+unsigned int send_msg(Client *c, char* buffer, size_t size);
+unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
+void send_new_long_msg(char* buffer, size_t size);
 
-
-
-
-/*Groups*/
-
-//Permisison Flags
-#define GRP_PERM_HAS_JOINED 0x1
-#define GRP_PERM_CAN_TALK 0x2
-#define GRP_PERM_CAN_INVITE 0x4
-#define GRP_PERM_CAN_KICK 0x8
-#define GRP_PERM_CAN_SETPERM 0x10
-
-#define GRP_PERM_DEFAULT (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE)
-#define GRP_PERM_ADMIN   (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
-
-
-
-//Should be castable to a User instead
-typedef struct {
-    char username[USERNAME_LENG+1];
-    Client *c;
-    UT_hash_handle hh;
-
-    int permissions;
-} Group_Member;
-
-typedef struct group {
-    char groupname[USERNAME_LENG+1];
-    Group_Member *members;
-    unsigned int member_count;
-    //unsigned int invite_only : 1;
-
-    UT_hash_handle hh;
-} Group;
-
-
-
-
-
-
-
-
-
-
-#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLIN | EPOLLRDHUP)
 
 #endif

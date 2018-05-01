@@ -5,14 +5,19 @@ all : clean common.o server.o client.o main
 common.o:
 	$(CC) -c common/common.c
 
-server.o: common.o
-	$(CC) -c server/server.c
+#Server
+group.o: common.o
+	$(CC) -c server/group.c
 
+server.o: common.o group.o
+	$(CC) -c server/server.c 
+
+#client
 client.o: common.o
 	$(CC) -c client/client.c
 
 main: server.o client.o
-	$(CC) -o a.out main.c common.o server.o client.o
+	$(CC) -o a.out main.c common.o group.o server.o client.o
 	rm -f *.o
 
 clean:

@@ -1,4 +1,5 @@
 #include "client.h"
+#include "../common/longsendrecv.c"
 
 #define MAX_EPOLL_EVENTS    32 
 
@@ -212,6 +213,20 @@ static int leave_group()
     return 1;
 }
 
+static int send_file()
+{
+    FileXferArgs args;
+
+    args = parse_send_cmd_sender(buffer);
+    if(!new_send_cmd(&args))
+        return 0;
+
+    //Rewrite the existing message in buffer with the de-localized filename
+    sprintf(buffer, "!sendfile=%s,size=%zu,target=%s", args.filename, args.filesize, args.target_name);
+    printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.target_name, args.filename, args.filesize);
+    return 1;
+}
+
 
 static int handle_user_command()
 {
@@ -219,12 +234,16 @@ static int handle_user_command()
     if(strcmp(buffer, "!close") == 0)
     {
         printf("Closing connection!\n");
-        return -1;
+        exit(0);
     }
+
     else if(strncmp(buffer, "!leavegroup=", 12) == 0)
-    {
         return leave_group();
-    }
+
+    else if(strncmp("!sendfile=", buffer, 10) == 0)
+        return send_file();
+        
+
 
     return 1;
 }
@@ -387,6 +406,23 @@ static void parse_userlist()
 }
 
 
+static int recv_file()
+{
+    FileXferArgs args;
+    char accept_msg[BUFSIZE + MAX_FILENAME];
+
+    //TODO: Allow user to choose whether to accept or reject the incoming file
+    args = parse_send_cmd_recver(buffer);
+    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.filename, args.filename, args.filesize);
+
+    if(!new_recv_cmd(&args))
+        return 0;
+
+    sprintf(accept_msg, "!acceptfile=%s,size=%zu", args.filename, args.filesize);
+    return send_msg(my_socketfd, accept_msg, strlen(accept_msg+1));
+}
+
+
 static void parse_control_message(char* cmd_buffer)
 {
     char *old_buffer = buffer;
@@ -404,6 +440,8 @@ static void parse_control_message(char* cmd_buffer)
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
 
+
+
     else if(strncmp("!groupinvite=", buffer, 13) == 0)
         group_invited();
 
@@ -418,6 +456,16 @@ static void parse_control_message(char* cmd_buffer)
 
     else if(strncmp("!groupkicked=", buffer, 13) == 0)
         group_kicked();
+
+    
+
+    else if(strncmp("!sendfile=", buffer, 10) == 0)
+        recv_file();
+
+
+
+    
+
 
     else
         printf("Received invalid control message \"%s\"\n", buffer);
@@ -462,16 +510,16 @@ static inline void client_main_loop()
                 if(strlen(buffer) < 1 || buffer[0] == '\n')
                     continue;
 
-                //Transmit the line read from stdin to the server
-                if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
-                    return;
-
                 //If the client has specified a command, check if anything needs to be done on the client side immediately
                 if(buffer[0] == '!')
                 {
-                    if(handle_user_command() < 0)
-                        exit(0);
-                }   
+                    if(!handle_user_command())
+                        continue;
+                }
+
+                //Transmit the line read from stdin to the server
+                if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+                    return;
             }
             
             //Message from Server

@@ -1,5 +1,6 @@
 #include "server_common.h"
 #include "group.h"
+#include "file_transfer.h"
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 
@@ -374,7 +375,6 @@ static inline int parse_client_command()
 {
     int bytes; 
 
-    //If the client requested to close the connection
     if(strncmp(buffer, "!register:", 10) == 0)
     {  
         return register_client();
@@ -392,14 +392,7 @@ static inline int parse_client_command()
         return userlist();
     }
 
-    else if(strcmp(buffer, "!testlong") == 0)
-    {
-        char testmsg[101] = "1111111111222222222233333333334444444444555555555566666666667777777777888888888899999999990000000000";
-        size_t testmsg_size = strlen(testmsg)+1;
-        
-        send_new_long_msg(testmsg, testmsg_size);
-        return 1;
-    }
+    /*Group Commands*/
 
     else if(strncmp(buffer, "!newgroup=", 10) == 0)
         return create_new_group();
@@ -415,6 +408,12 @@ static inline int parse_client_command()
 
     else if(strncmp(buffer, "!kickgroup=", 11) == 0)
         return kick_from_group();
+
+    /*File Transfer Commands*/
+    else if(strncmp(buffer, "!sendfile=", 10) == 0)
+        return new_client_transfer();
+
+
     
     else
     {

@@ -2,6 +2,7 @@
     "files.associations": {
         "client.h": "c",
         "server.h": "c",
-        "common.h": "c"
+        "common.h": "c",
+        "server_common.h": "c"
     }
 }

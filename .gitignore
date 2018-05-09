@@ -52,4 +52,5 @@ Mkfile.old
 dkms.conf
 
 bak/
+SENDFILE/
 test.txt

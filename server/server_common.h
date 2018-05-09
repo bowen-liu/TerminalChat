@@ -15,6 +15,7 @@ typedef struct {
 
     /*Userinfo*/
     char username[USERNAME_LENG+1];
+    int is_admin :1;
 
     /*Other data*/
     char* pending_buffer;

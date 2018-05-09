@@ -2,22 +2,32 @@ CC=gcc
 
 all : clean common.o server.o client.o main
 
-common.o:
+#Common
+longsendrecv.o:
+	$(CC) -c common/longsendrecv.c
+
+common.o: longsendrecv.o
 	$(CC) -c common/common.c
+
+
 
 #Server
 group.o: common.o
 	$(CC) -c server/group.c
 
-server.o: common.o group.o
+file_transfer.o: common.o
+	$(CC) -c server/file_transfer.c
+
+server.o: common.o group.o file_transfer.o
 	$(CC) -c server/server.c 
 
-#client
+
+#Client
 client.o: common.o
 	$(CC) -c client/client.c
 
 main: server.o client.o
-	$(CC) -o a.out main.c common.o group.o server.o client.o
+	$(CC) -o a.out main.c common.o file_transfer.o group.o server.o client.o
 	rm -f *.o
 
 clean:

@@ -3,7 +3,7 @@
 #include "server.h"
 
 /******************************/
-/*      Group Send    */
+/*         Group Send         */
 /******************************/
 
 unsigned int send_group(Group* group, char* buffer, size_t size)
@@ -221,6 +221,7 @@ int userlist_group(char *group_name)
 
     return group->member_count;
 }
+
 
 static int invite_to_group_direct(Group *group, User *user);
 int create_new_group()
@@ -584,6 +585,7 @@ int kick_from_group()
 }
 
 
+//To be done
 int change_group_member_permission(Group *group, User *user, int new_permissions)
 {
     return 0;

@@ -1,9 +1,11 @@
 #ifndef _SERVER_COMMON_H_
 #define _SERVER_COMMON_H_
 
-#include "../common/common.h"     
+#include "../common/common.h"  
+   
 
 struct namelist;
+struct filexferargs_server;
 
 //Abstracts each active client participating in the server
 typedef struct {
@@ -17,13 +19,14 @@ typedef struct {
     char username[USERNAME_LENG+1];
     int is_admin :1;
 
-    /*Other data*/
+    /*Pending Long Message (if any)*/
     char* pending_buffer;
     size_t pending_size;
     size_t pending_processed;
 
-    /**/
+    /*Descriptors for other server components*/
     struct namelist *groups_joined;
+    struct filexferargs_server *file_transfers;
 
     UT_hash_handle hh;
 } Client;
@@ -37,5 +40,7 @@ typedef struct {
 } User;
 
 
+
+User* get_current_client_user();
 
 #endif

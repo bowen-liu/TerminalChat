@@ -34,6 +34,9 @@ typedef struct namelist {
 } Namelist;
 
 
+enum sendrecv_op {NONE = 0, SENDING_OP, RECVING_OP};
+
+
 
 void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);

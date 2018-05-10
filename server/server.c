@@ -24,19 +24,26 @@ Group* groups = NULL;                               //Hashtable of all user crea
 unsigned int total_users = 0;    
 
 //Client being served right now
-Client *current_client;                         //Descriptor for the client being serviced right now
+Client *current_client;                             //Descriptor for the client being serviced right now
 
 
 /******************************/
 /*          Helpers           */
 /******************************/                 
 
+User* get_current_client_user()
+{
+    User* user;
+    HASH_FIND_STR(active_users, current_client->username, user);
+    return user;
+}
+
 static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
 
 static void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
-    User *User;
+    User *user;
     
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!");
@@ -61,15 +68,17 @@ static void disconnect_client(Client *c)
     printf("Disconnecting \"%s\"\n", c->username);
     send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);
 
-    HASH_FIND_STR(active_users, c->username, User);
-    HASH_DEL(active_users, User);
-    free(User);
+    user = get_current_client_user();
+    HASH_DEL(active_users, user);
+    free(user);
     
     HASH_DEL(active_connections, c);
     free(c);
 
     --total_users;
 }
+
+
 
 
 /******************************/
@@ -409,9 +418,13 @@ static inline int parse_client_command()
     else if(strncmp(buffer, "!kickgroup=", 11) == 0)
         return kick_from_group();
 
+
     /*File Transfer Commands*/
     else if(strncmp(buffer, "!sendfile=", 10) == 0)
         return new_client_transfer();
+
+    else if(strncmp(buffer, "!acceptfile=", 12) == 0)
+        return accepted_file_transfer();
 
 
     

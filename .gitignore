@@ -53,4 +53,5 @@ dkms.conf
 
 bak/
 SENDFILES/
+files_received/
 test.txt

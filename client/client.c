@@ -2,6 +2,7 @@
 #include "../common/longsendrecv.c"
 
 #define MAX_EPOLL_EVENTS    32 
+#define EPOLL_FLAGS         EPOLLIN
 
 //Socket for communicating with the server
 static int my_socketfd;                    //My (client) socket fd
@@ -413,13 +414,13 @@ static int recv_file()
 
     //TODO: Allow user to choose whether to accept or reject the incoming file
     args = parse_send_cmd_recver(buffer);
-    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.filename, args.filename, args.filesize);
+    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.target_name, args.filename, args.filesize);
 
     if(!new_recv_cmd(&args))
         return 0;
 
-    sprintf(accept_msg, "!acceptfile=%s,size=%zu", args.filename, args.filesize);
-    return send_msg(my_socketfd, accept_msg, strlen(accept_msg+1));
+    sprintf(accept_msg, "!acceptfile=%s,size=%zu,target=%s", args.filename, args.filesize, args.target_name);
+    return send_msg(my_socketfd, accept_msg, strlen(accept_msg)+1);
 }
 
 
@@ -597,7 +598,7 @@ void client(const char* ipaddr, const int port,  char *username)
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, my_socketfd, EPOLLIN))
+    if(!register_fd_with_epoll(epoll_fd, my_socketfd, EPOLL_FLAGS))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
@@ -610,3 +611,6 @@ void client(const char* ipaddr, const int port,  char *username)
     //Terminate the connection with the server
     close(my_socketfd);
 }
+
+#undef MAX_EPOLL_EVENTS 
+#undef EPOLL_FLAGS

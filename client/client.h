@@ -12,8 +12,4 @@ typedef struct {
 } Member;
 
 
-
-#define FILE_XFER_DIRECTORY "files_received"
-
-
 #endif

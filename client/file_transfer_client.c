@@ -1,4 +1,4 @@
-#include "longsendrecv.h"
+#include "file_transfer_client.h"
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -17,6 +17,10 @@ void cleanup_transfer_args(FileXferArgs *args)
     memset(args, 0, sizeof(FileXferArgs));
 }
 
+void cancel_transfer(FileXferArgs *args)
+{
+    
+}
 
 
 /******************************/
@@ -24,24 +28,21 @@ void cleanup_transfer_args(FileXferArgs *args)
 /******************************/ 
 
 //Used by the sending client locally to parse its command into a FileXferArgs struct
-FileXferArgs parse_send_cmd_sender(char *buffer)
+void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
 {
-    //You must fill args->socketfd before you call this function
-    
-    FileXferArgs args;
+    //You must fill args->socketfd before or after you call this function
+
     char *filename_start;
 
-    memset(&args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", args.target_file, &args.filesize, args.target_name);
+    memset(args, 0 ,sizeof(FileXferArgs));
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", args->target_file, &args->filesize, args->target_name);
 
     //Extract the filename from the target file path
-    filename_start = strrchr(args.target_file, '/');
+    filename_start = strrchr(args->target_file, '/');
     if(filename_start)
-        strcpy(args.filename, ++filename_start);
+        strcpy(args->filename, ++filename_start);
     else
-        strcpy(args.filename, args.target_file);
-
-   return args;
+        strcpy(args->filename, args->target_file);
 }
 
 
@@ -67,6 +68,7 @@ int new_send_cmd(FileXferArgs *args)
     if(!args->file_buffer)
     {
         perror("Failed to map sending file to memory.");
+        fclose(args->file_fp);
         return 0;
     }
 
@@ -119,16 +121,12 @@ int file_send_next(FileXferArgs *args)
 /******************************/ 
 
 //Used by the receiver and server to parse its command into a FileXferArgs struct
-FileXferArgs parse_send_cmd_recver(char *buffer)
+void parse_send_cmd_recver(char *buffer, FileXferArgs *args)
 {
-    FileXferArgs args;
-
-    memset(&args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", args.filename, &args.filesize, args.target_name);
+    memset(args, 0 ,sizeof(FileXferArgs));
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%[^,],token=%s", args->filename, &args->filesize, args->target_name, args->token);
 
     //You must now fill args->socketfd yourself after calling this function, if you choose to accept the file afterwards
-
-    return args;
 }
 
 

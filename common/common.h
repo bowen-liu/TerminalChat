@@ -27,14 +27,20 @@
 #define LONG_RECV_PAGE_SIZE 32      //For testing long send/recv
 
 
+/*File Transfer*/
+#define MAX_FILENAME    128
+#define MAX_FILE_PATH   512 + MAX_FILENAME
+#define TRANSFER_TOKEN_SIZE 16
+
+enum sendrecv_op {NONE = 0, SENDING_OP, RECVING_OP};
+
+
+
 
 typedef struct namelist {
     char name[USERNAME_LENG+1];
     struct namelist *next;
 } Namelist;
-
-
-enum sendrecv_op {NONE = 0, SENDING_OP, RECVING_OP};
 
 
 

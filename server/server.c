@@ -1,6 +1,6 @@
 #include "server_common.h"
 #include "group.h"
-#include "file_transfer.h"
+#include "file_transfer_server.h"
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 

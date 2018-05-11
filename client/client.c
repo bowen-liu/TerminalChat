@@ -1,5 +1,5 @@
 #include "client.h"
-#include "../common/longsendrecv.c"
+#include "file_transfer_client.h"
 
 #define MAX_EPOLL_EVENTS    32 
 #define EPOLL_FLAGS         EPOLLIN
@@ -26,10 +26,12 @@ static size_t received_long;
 static char* userName;
 static Namelist* groups_joined;
 
-
 //Other clients
 static Member *online_members = NULL;
 static unsigned int users_online = 0;
+
+//Pending File Transfers
+FileXferArgs *file_transfers;
 
 
 /******************************/
@@ -69,7 +71,7 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
     }
     else if(bytes == 0)
     {
-        perror("Server has disconnected unexpectedly...");
+        printf("Server has disconnected unexpectedly...");
         return 0;
     }
 
@@ -216,15 +218,21 @@ static int leave_group()
 
 static int send_file()
 {
-    FileXferArgs args;
+    if(file_transfers)
+    {
+        printf("A pending file transfer already exist. Cannot continue...\n");
+        return 0;
+    }
 
-    args = parse_send_cmd_sender(buffer);
-    if(!new_send_cmd(&args))
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+
+    parse_send_cmd_sender(buffer, file_transfers);
+    if(!new_send_cmd(file_transfers))
         return 0;
 
     //Rewrite the existing message in buffer with the de-localized filename
-    sprintf(buffer, "!sendfile=%s,size=%zu,target=%s", args.filename, args.filesize, args.target_name);
-    printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.target_name, args.filename, args.filesize);
+    sprintf(buffer, "!sendfile=%s,size=%zu,target=%s", file_transfers->filename, file_transfers->filesize, file_transfers->target_name);
+    printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", file_transfers->target_name, file_transfers->filename, file_transfers->filesize);
     return 1;
 }
 
@@ -407,20 +415,45 @@ static void parse_userlist()
 }
 
 
+/*File Transfer*/
+
+static int reject_incoming_file_direct(FileXferArgs *args)
+{
+    char reject_msg[BUFSIZE + MAX_FILENAME]; 
+
+    sprintf(reject_msg, "!rejectfile=%s,from=%s", args->filename, args->target_name);
+    return send_msg(my_socketfd, reject_msg, strlen(reject_msg)+1);
+}
+
 static int recv_file()
 {
-    FileXferArgs args;
+    FileXferArgs temp_args;
     char accept_msg[BUFSIZE + MAX_FILENAME];
 
-    //TODO: Allow user to choose whether to accept or reject the incoming file
-    args = parse_send_cmd_recver(buffer);
-    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", args.target_name, args.filename, args.filesize);
+    if(file_transfers)
+    {
+        parse_send_cmd_recver(buffer, &temp_args);
+        printf("Cannot receive new incoming file. A pending file transfer is already in progress...\n");
+        reject_incoming_file_direct(&temp_args);
+        return 0;
+    }
 
-    if(!new_recv_cmd(&args))
+    file_transfers = calloc(1,sizeof(FileXferArgs));
+
+    //TODO: Allow user to choose whether to accept or reject the incoming file
+    parse_send_cmd_recver(buffer, file_transfers);
+    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes, token: %s)\n", file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->token);
+
+    if(!new_recv_cmd(file_transfers))
         return 0;
 
-    sprintf(accept_msg, "!acceptfile=%s,size=%zu,target=%s", args.filename, args.filesize, args.target_name);
+    sprintf(accept_msg, "!acceptfile=%s,size=%zu,target=%s,token=%s", file_transfers->filename, file_transfers->filesize, file_transfers->target_name, file_transfers->token);
     return send_msg(my_socketfd, accept_msg, strlen(accept_msg)+1);
+}
+
+static int begin_file_sending()
+{
+    printf("File transfer accepted. Begin file sending...\n");
 }
 
 
@@ -462,6 +495,9 @@ static void parse_control_message(char* cmd_buffer)
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
         recv_file();
+
+    else if(strncmp("!acceptfile=", buffer, 12) == 0)
+        begin_file_sending();
 
 
 

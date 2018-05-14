@@ -54,18 +54,6 @@ static int new_transfer_connection(FileXferArgs *args)
     return args->socketfd;
 }
 
-int file_send_fsm(FileXferArgs *args);
-int file_recv_fsm(FileXferArgs *args);
-
-int transfer_event_handler(FileXferArgs *args)
-{
-    if(args->operation = SENDING_OP)
-        return file_send_fsm(args);
-    else if(args->operation = RECVING_OP)
-        return file_recv_fsm(args);
-    
-    return 0;
-}
 
 
 /******************************/
@@ -88,6 +76,15 @@ void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
         strcpy(args->filename, ++filename_start);
     else
         strcpy(args->filename, args->target_file);
+}
+
+
+//Used by the sending client locally to parse its command into a FileXferArgs struct
+void parse_accept_cmd(char *buffer, FileXferArgs *args)
+{
+    memset(args, 0 ,sizeof(FileXferArgs));
+    sscanf(buffer, "!acceptfile=%[^,],size=%zu,target=%[^,],token=%s", 
+            args->filename, &args->filesize, args->target_name, args->token);
 }
 
 
@@ -121,6 +118,84 @@ int new_send_cmd(FileXferArgs *args)
     
     return 1;
 }
+
+
+/*WARNING: args is not a completed FileXferArgs. It's merely the response received from the accept message*/
+int recver_accepted_file(char* buffer)
+{
+    char accepted_filename[FILENAME_MAX+1];
+    size_t accepted_filesize;
+    char accepted_target_name[USERNAME_LENG+1];
+    char accepted_token[TRANSFER_TOKEN_SIZE+1];
+
+    FileXferArgs *args = file_transfers;
+    int matches = 0;
+
+    sscanf(buffer, "!acceptfile=%[^,],size=%zu,target=%[^,],token=%s", 
+            accepted_filename, &accepted_filesize, accepted_target_name, accepted_token);
+
+    //Validate this transfer matches what we intended to send
+    if(file_transfers)
+        if(strcmp(file_transfers->target_name, accepted_target_name) == 0)
+            if(strcmp(file_transfers->filename, accepted_filename) == 0)
+                if(file_transfers->filesize == accepted_filesize)
+                    matches = 1;
+    
+    if(!matches)
+    {
+        printf("No pending file send for file \"%s\" (%zu bytes) for user \"%s\".\n",
+                accepted_filename, accepted_filesize, accepted_target_name);
+        return 0;
+    }
+
+    printf("Receiver \"%s\" has accepted to receive the file \"%s\" (%zu bytes, token: %s)!\n" ,
+            accepted_filename, accepted_target_name, accepted_filesize, accepted_token);
+    
+    strcpy(file_transfers->token, accepted_token);
+
+    /*******************************************************/
+    /* Open new connection to server for file transferring */
+    /*******************************************************/
+
+    if(!new_transfer_connection(args))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+
+    //Tell server I'm using this connection to download a file
+    sprintf(buffer, "!xfersend=%s,size=%zu,sender=%s,recver=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, my_username, file_transfers->target_name, file_transfers->token);
+    if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
+    {
+        perror("Failed to send transfer registration.");
+        cancel_transfer(args);
+        return 0;
+    }
+
+    //Obtain a response from the server
+    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+
+    if(strcmp(buffer, "Accepted") != 0)
+    {
+        printf("Server did not accept transfer connection: \"%s\"\n", buffer);
+        cancel_transfer(args);
+        return 0;
+    }
+        
+    printf("Sender has successfully established to the server!\n");
+
+    //Register the new connection with epoll and set it as nonblocking
+    /*fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
+    register_fd_with_epoll(epoll_fd, args->socketfd, CLIENT_EPOLL_FLAGS);*/
+
+    return args->socketfd;
+}
+
 
 int file_send_next(FileXferArgs *args)
 {
@@ -159,25 +234,8 @@ int file_send_next(FileXferArgs *args)
     return 0;
 }
 
-int file_send_fsm(FileXferArgs *args)
-{
-    switch(args->connection_state)
-    {
-        case NEW_XFER:
-        break;
 
-        case REGISTRATION_SENT:
-        break;
 
-        case TRANSFERING:
-        break;
-        
-        default:
-        return 0;
-    }
-
-    return 1;
-}
 
 
 /******************************/
@@ -342,11 +400,4 @@ int file_recv_next(FileXferArgs *args)
     cleanup_transfer_args(args);
 
     return 0;
-}
-
-int file_recv_fsm(FileXferArgs *args)
-{
-    
-
-    return 1;
 }

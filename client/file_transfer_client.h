@@ -34,12 +34,15 @@ typedef struct {
 
 
 void cleanup_transfer_args(FileXferArgs *args);
-int transfer_event_handler(FileXferArgs *args);
 
+/*Sending*/
 void parse_send_cmd_sender(char *buffer, FileXferArgs *args);
 int new_send_cmd(FileXferArgs *args);
+int recver_accepted_file(char* buffer);
 
+/*Receiving*/
 void parse_send_cmd_recver(char *buffer, FileXferArgs *args);
+void parse_accept_cmd(char *buffer, FileXferArgs *args);
 int new_recv_cmd(FileXferArgs *args);
 
 #endif

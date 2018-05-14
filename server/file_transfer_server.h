@@ -20,8 +20,8 @@ typedef struct filexferargs_server {
 } FileXferArgs_Server;
 
 
-int register_send_transfer_connection();
 int register_recv_transfer_connection();
+int register_send_transfer_connection();
 
 int client_transfer();
 int new_client_transfer();

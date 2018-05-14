@@ -47,7 +47,9 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
     enum sendrecv_op expected_target_op;
     int matches = 0;
 
-    /* Validates the request against the requesting user's own information */
+    /*******************************************************************/
+    /* Validates the request against the requester's own transfer args */
+    /*******************************************************************/
 
     //Skip this step if request_username is NULL.
     if(request_username)
@@ -63,22 +65,11 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
         xferargs = request_user->c->file_transfers;
 
         if(xferargs && xferargs->operation == request->operation)
-            if(strcmp(xferargs->filename, request->filename) == 0)
-                if(xferargs->filesize == request->filesize)
-                    if(strcmp(xferargs->token, request->token) == 0)
+            if(strcmp(xferargs->token, request->token) == 0)
+                if(strcmp(xferargs->filename, request->filename) == 0)
+                    if(xferargs->filesize == request->filesize)
                         if(xferargs->transferred == 0)
                             matches = 1;
-                        else
-                            printf("Transfer already commencing\n");
-                    else
-                        printf("Wrong token\n");
-                else
-                    printf("Wrong filesize\n");
-            else
-                printf("Wrong filename\n");
-        else
-            printf("Wrong op\n");
-
 
         if(!matches)
         {
@@ -88,12 +79,14 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
         }
     }
     else
-        request_username = current_client->username;        //Use current_client if request_username is not not specified 
+        //Use current_client if request_username is not not specified 
+        request_username = current_client->username;        
 
 
-    /* Validates the request against the requesting user's own information */
-    
-    matches = 0;
+
+    /************************************************************/
+    /* Validates the request against the target's transfer args */
+    /************************************************************/
 
     //Locate the target user
     HASH_FIND_STR(active_users, target_username, target_user);
@@ -108,13 +101,14 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
     //Match the information in the target user's transfer args with this request
     xferargs = target_user->c->file_transfers;
     expected_target_op = (request->operation == SENDING_OP)? RECVING_OP:SENDING_OP;
+    matches = 0;
 
     if(xferargs && xferargs->operation == expected_target_op)
-        if(strcmp(xferargs->filename, request->filename) == 0)
-            if(xferargs->filesize == request->filesize)
-                if(xferargs->transferred == 0)
-                    if(strcmp(xferargs->target->username, request_username) == 0)
-                        if(strcmp(xferargs->token, request->token) == 0)
+        if(strcmp(xferargs->token, request->token) == 0)
+            if(strcmp(xferargs->target->username, request_username) == 0)
+                if(strcmp(xferargs->filename, request->filename) == 0)
+                    if(xferargs->filesize == request->filesize)
+                        if(xferargs->transferred == 0)
                             matches = 1;
 
     if(!matches)
@@ -132,14 +126,40 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
 /* New Incoming File Transfer Connections */
 /******************************************/ 
 
-
 int register_send_transfer_connection()
 {
-    printf("Got a new send connection request!");
-    printf("%s\n", buffer);
+
+    char sender_name[USERNAME_LENG+1], recver_name[USERNAME_LENG+1];
+    User *sender, *recver;
+
+    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+
+    printf("Got a new transfer connection (SEND) request!\n");
+    printf("\"%s\"\n", buffer);
+
+    xferargs->operation = SENDING_OP;
+    sscanf(buffer, "!xfersend=%[^,],size=%zu,sender=%[^,],recver=%[^,],token=%[^,]", 
+            xferargs->filename, &xferargs->filesize, sender_name, recver_name, xferargs->token);
+    
+    if(!validate_transfer_target(xferargs, sender_name, recver_name))
+    {
+        printf("Mismatching SENDING transfer connection.\n");
+        send_msg(current_client, "WrongInfo", 10);
+        disconnect_client(current_client);
+        free(xferargs);
+        return 0;
+    }
+
+    current_client->connection_type = TRANSFER_CONNECTION;
+    current_client->file_transfers = xferargs;
+    strcpy(current_client->username, sender_name);
 
     sprintf(buffer, "Accepted");
     send_msg(current_client, buffer, strlen(buffer)+1);
+    printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n",
+            xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
+    
+    return 0;
 }
 
 int register_recv_transfer_connection()
@@ -149,7 +169,7 @@ int register_recv_transfer_connection()
 
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
 
-    printf("Got a new recv connection request!\n");
+    printf("Got a new transfer connection (RECV) request!\n");
 
     xferargs->operation = RECVING_OP;
     sscanf(buffer, "!xferrecv=%[^,],size=%zu,sender=%[^,],recver=%[^,],token=%[^,]", 
@@ -177,6 +197,7 @@ int register_recv_transfer_connection()
 
     return 0;
 }
+
 
 
 /******************************/

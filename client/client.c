@@ -221,7 +221,7 @@ static int leave_group()
     return 1;
 }
 
-static int send_file()
+static int outgoing_file()
 {
     if(file_transfers)
     {
@@ -255,7 +255,7 @@ static int handle_user_command()
         return leave_group();
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
-        return send_file();
+        return outgoing_file();
         
 
 
@@ -430,10 +430,9 @@ static int reject_incoming_file_direct(FileXferArgs *args)
     return send_msg(reject_msg, strlen(reject_msg)+1);
 }
 
-static int recv_file()
+static int incoming_file()
 {
     FileXferArgs temp_args;
-    char accept_msg[BUFSIZE + MAX_FILENAME];
 
     if(file_transfers)
     {
@@ -458,7 +457,7 @@ static int recv_file()
 
 static int begin_file_sending()
 {
-    printf("File transfer accepted. Begin file sending...\n");
+    return recver_accepted_file(buffer);
 }
 
 
@@ -499,7 +498,7 @@ static void parse_control_message(char* cmd_buffer)
     
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
-        recv_file();
+        incoming_file();
 
     else if(strncmp("!acceptfile=", buffer, 12) == 0)
         begin_file_sending();

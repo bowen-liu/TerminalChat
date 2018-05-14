@@ -1,4 +1,6 @@
 #include "file_transfer_client.h"
+#include "client.h"
+
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
@@ -12,6 +14,8 @@
 /******************************/ 
 void cleanup_transfer_args(FileXferArgs *args)
 {
+    close(args->socketfd);
+
     munmap((void*)args->file_buffer, args->filesize);
     fclose(args->file_fp);
     memset(args, 0, sizeof(FileXferArgs));
@@ -19,7 +23,48 @@ void cleanup_transfer_args(FileXferArgs *args)
 
 void cancel_transfer(FileXferArgs *args)
 {
+    cleanup_transfer_args(args);
+}
+
+
+static int new_transfer_connection(FileXferArgs *args)
+{
+    args->socketfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(!args->socketfd)
+    {
+        perror("Failed to create socket for new transfer connection.");
+        return 0;
+    }
+
+    if(connect(args->socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr_in)) < 0)
+    {
+        perror("Failed to connect for new transfer connection.");
+        return 0;
+    }
+
+    //Wait for server greeting
+    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+    printf("%s\n", buffer);
+
+    return args->socketfd;
+}
+
+int file_send_fsm(FileXferArgs *args);
+int file_recv_fsm(FileXferArgs *args);
+
+int transfer_event_handler(FileXferArgs *args)
+{
+    if(args->operation = SENDING_OP)
+        return file_send_fsm(args);
+    else if(args->operation = RECVING_OP)
+        return file_recv_fsm(args);
     
+    return 0;
 }
 
 
@@ -77,7 +122,6 @@ int new_send_cmd(FileXferArgs *args)
     return 1;
 }
 
-
 int file_send_next(FileXferArgs *args)
 {
     int remaining_size = args->filesize - args->transferred;
@@ -113,6 +157,26 @@ int file_send_next(FileXferArgs *args)
     //update_epoll_events(epoll_fd, args->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
     
     return 0;
+}
+
+int file_send_fsm(FileXferArgs *args)
+{
+    switch(args->connection_state)
+    {
+        case NEW_XFER:
+        break;
+
+        case REGISTRATION_SENT:
+        break;
+
+        case TRANSFERING:
+        break;
+        
+        default:
+        return 0;
+    }
+
+    return 1;
 }
 
 
@@ -194,7 +258,54 @@ int new_recv_cmd(FileXferArgs *args)
 
     args->operation = RECVING_OP;
 
-    return 1;
+    //Tell the server I am accepting this file
+    sprintf(buffer, "!acceptfile=%s,size=%zu,target=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->target_name, file_transfers->token);
+    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+
+
+
+    /*******************************************************/
+    /* Open new connection to server for file transferring */
+    /*******************************************************/
+
+    if(!new_transfer_connection(args))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+
+    //Tell server I'm using this connection to download a file
+    sprintf(buffer, "!xferrecv=%s,size=%zu,sender=%s,recver=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->target_name, my_username, file_transfers->token);
+    if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
+    {
+        perror("Failed to send transfer registration.");
+        cancel_transfer(args);
+        return 0;
+    }
+
+    //Obtain a response from the server
+    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+
+    if(strcmp(buffer, "Accepted") != 0)
+    {
+        printf("Server did not accept transfer connection: \"%s\"\n", buffer);
+        cancel_transfer(args);
+        return 0;
+    }
+        
+    printf("Receiver has successfully established to the server!\n");
+
+    //Register the new connection with epoll and set it as nonblocking
+    /*fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
+    register_fd_with_epoll(epoll_fd, args->socketfd, CLIENT_EPOLL_FLAGS);*/
+
+    return args->socketfd;
 }
 
 
@@ -231,4 +342,11 @@ int file_recv_next(FileXferArgs *args)
     cleanup_transfer_args(args);
 
     return 0;
+}
+
+int file_recv_fsm(FileXferArgs *args)
+{
+    
+
+    return 1;
 }

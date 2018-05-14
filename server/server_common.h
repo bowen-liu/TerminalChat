@@ -7,6 +7,8 @@
 struct namelist;
 struct filexferargs_server;
 
+enum connection_type {UNREGISTERED_CONNECTION = 0, USER_CONNECTION, TRANSFER_CONNECTION};
+
 //Abstracts each active client participating in the server
 typedef struct {
     
@@ -14,6 +16,7 @@ typedef struct {
     int socketfd;                        //Key used for the main active client hash table
     struct sockaddr_in sockaddr;
     int sockaddr_leng;
+    enum connection_type connection_type;
 
     /*Userinfo*/
     char username[USERNAME_LENG+1];
@@ -42,5 +45,6 @@ typedef struct {
 
 
 User* get_current_client_user();
+void disconnect_client(Client *c);
 
 #endif

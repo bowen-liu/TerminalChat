@@ -1,19 +1,14 @@
 #include "client.h"
-#include "file_transfer_client.h"
-
-#define MAX_EPOLL_EVENTS    32 
-#define EPOLL_FLAGS         EPOLLIN
 
 //Socket for communicating with the server
-static int my_socketfd;                    //My (client) socket fd
-static struct sockaddr_in server_addr;     //Server's information struct
+int my_socketfd;                                    //My (client) main socket connection with the server
+struct sockaddr_in server_addr;                     //Server's information struct
 
 //epoll event structures for handling multiple clients 
-static struct epoll_event events[MAX_EPOLL_EVENTS];
-static int epoll_fd;
+int epoll_fd;
 
 //Receive buffers
-static char *buffer;
+char *buffer;
 static size_t buffer_size = BUFSIZE;
 static size_t last_received;
 
@@ -23,7 +18,7 @@ static size_t expected_long_size;
 static size_t received_long;
 
 //User info
-static char* userName;
+char* my_username;
 static Namelist* groups_joined;
 
 //Other clients
@@ -38,7 +33,7 @@ FileXferArgs *file_transfers;
 /*     Basic Send/Receive     */
 /******************************/
 
-static unsigned int send_msg(int socket, char* buffer, size_t size)
+unsigned int send_msg_client(int socket, char* buffer, size_t size)
 {
     int bytes;
 
@@ -61,7 +56,7 @@ static unsigned int send_msg(int socket, char* buffer, size_t size)
     return bytes;
 }
 
-static unsigned int recv_msg(int socket, char* buffer, size_t size)
+unsigned int recv_msg_client(int socket, char* buffer, size_t size)
 {
     int bytes = recv(socket, buffer, size, 0);
     if(bytes < 0)
@@ -71,11 +66,21 @@ static unsigned int recv_msg(int socket, char* buffer, size_t size)
     }
     else if(bytes == 0)
     {
-        printf("Server has disconnected unexpectedly...");
+        printf("Server has disconnected unexpectedly...\n");
         return 0;
     }
 
     return bytes;
+}
+
+static inline unsigned int send_msg(char* buffer, size_t size)
+{
+    return send_msg_client(my_socketfd, buffer, size);
+}
+
+static inline unsigned int recv_msg(char* buffer, size_t size)
+{
+    return recv_msg_client(my_socketfd, buffer, size);
 }
 
 /******************************/
@@ -155,29 +160,29 @@ static int register_with_server()
     int bytes;
     
     //Receive a greeting message from the server
-    if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+    if(!recv_msg(buffer, BUFSIZE))
         return 0;
     printf("%s\n", buffer);
 
     //Register my desired username
-    printf("Registering username \"%s\"...\n", userName);
-    sprintf(buffer, "!register:username=%s", userName);
-    if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+    printf("Registering username \"%s\"...\n", my_username);
+    sprintf(buffer, "!register:username=%s", my_username);
+    if(!send_msg(buffer, strlen(buffer)+1))
         return 0;
 
     //Parse registration reply from server
-    if(!recv_msg(my_socketfd, buffer, BUFSIZE))
+    if(!recv_msg(buffer, BUFSIZE))
         return 0;
 
     //Did we receive an anticipated !regreply?
     if(strncmp(buffer, "!regreply:username=", 19) == 0)
     {
-        sscanf(&buffer[19], "%s", userName);
-        printf("Registered with server as \"%s\"\n", userName);
+        sscanf(&buffer[19], "%s", my_username);
+        printf("Registered with server as \"%s\"\n", my_username);
 
         //Request a list of active users from the server. The response will be handled once main loop starts
         strcpy(buffer, "!userlist");
-        if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+        if(!send_msg(buffer, strlen(buffer)+1))
             return 0;
         return 1;
     }
@@ -301,7 +306,7 @@ static void group_invited()
 
     //Automatically accept it for now
     sprintf(buffer, "!joingroup=%s", group_name);
-    send_msg(my_socketfd, buffer, strlen(buffer)+1);
+    send_msg(buffer, strlen(buffer)+1);
 }
 
 static void group_joined()
@@ -422,7 +427,7 @@ static int reject_incoming_file_direct(FileXferArgs *args)
     char reject_msg[BUFSIZE + MAX_FILENAME]; 
 
     sprintf(reject_msg, "!rejectfile=%s,from=%s", args->filename, args->target_name);
-    return send_msg(my_socketfd, reject_msg, strlen(reject_msg)+1);
+    return send_msg(reject_msg, strlen(reject_msg)+1);
 }
 
 static int recv_file()
@@ -440,15 +445,15 @@ static int recv_file()
 
     file_transfers = calloc(1,sizeof(FileXferArgs));
 
-    //TODO: Allow user to choose whether to accept or reject the incoming file
+    //TODO: Allow user to choose whether to accept or reject the incoming file at this point
     parse_send_cmd_recver(buffer, file_transfers);
-    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes, token: %s)\n", file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->token);
+    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes, token: %s)\n", 
+            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->token);
 
     if(!new_recv_cmd(file_transfers))
         return 0;
 
-    sprintf(accept_msg, "!acceptfile=%s,size=%zu,target=%s,token=%s", file_transfers->filename, file_transfers->filesize, file_transfers->target_name, file_transfers->token);
-    return send_msg(my_socketfd, accept_msg, strlen(accept_msg)+1);
+    return 1;
 }
 
 static int begin_file_sending()
@@ -555,12 +560,12 @@ static inline void client_main_loop()
                 }
 
                 //Transmit the line read from stdin to the server
-                if(!send_msg(my_socketfd, buffer, strlen(buffer)+1))
+                if(!send_msg(buffer, strlen(buffer)+1))
                     return;
             }
             
             //Message from Server
-            else
+            else if(events[i].data.fd == my_socketfd)
             {            
                 //Return to receiving a long message if it's still pending
                 if(pending_long_msg == 1)
@@ -570,7 +575,7 @@ static inline void client_main_loop()
                 }
                 
                 //Otherwise, receive a regular new message from the server
-                last_received = recv_msg(my_socketfd, buffer, BUFSIZE);
+                last_received = recv_msg(buffer, BUFSIZE);
                 if(!last_received)
                     return;
 
@@ -578,6 +583,13 @@ static inline void client_main_loop()
                     parse_control_message(buffer);
                 else
                     printf("%s\n", buffer);
+            }
+
+            //Data from other transfer connections
+            else
+            {
+                if((events[i].data.fd == file_transfers->socketfd))
+                    printf("Data transfer!\n");
             }
         }
     }
@@ -594,7 +606,7 @@ void client(const char* ipaddr, const int port,  char *username)
         return;
     
     buffer = calloc(BUFSIZE, sizeof(char));
-    userName = username;
+    my_username = username;
     printf("Username: %s\n", username);
 
 
@@ -634,7 +646,7 @@ void client(const char* ipaddr, const int port,  char *username)
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, my_socketfd, EPOLL_FLAGS))
+    if(!register_fd_with_epoll(epoll_fd, my_socketfd, CLIENT_EPOLL_FLAGS))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
@@ -647,6 +659,3 @@ void client(const char* ipaddr, const int port,  char *username)
     //Terminate the connection with the server
     close(my_socketfd);
 }
-
-#undef MAX_EPOLL_EVENTS 
-#undef EPOLL_FLAGS

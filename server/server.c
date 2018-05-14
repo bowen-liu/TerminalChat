@@ -8,7 +8,7 @@
 
 //Server socket structures
 int server_socketfd;
-struct sockaddr_in server_addr;              //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
+struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
 
 //epoll FD for handling multiple clients 
 static int epoll_fd;  
@@ -40,7 +40,7 @@ User* get_current_client_user()
 
 static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
 
-static void disconnect_client(Client *c)
+void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
     User *user;
@@ -224,53 +224,12 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 }
 
 
-/******************************/
-/*      Client Operations    */
-/******************************/
 
-static inline int client_pm()
-{
-    char *target_username;
-    char *target_msg;
-    char pmsg[MAX_MSG_LENG];
-    User *target;
+/**************************************/
+/* Client New Connection Registration */
+/**************************************/
 
-    //Find the occurance of the first space
-    target_msg = strchr(buffer, ' ');
-    if(!target_msg)
-    {
-        printf("Invalid username specified, or no message specified\n");
-        return 0;
-    }
-
-    //Seperate the target's name and message from the buffer
-    target_username = &buffer[1];
-    target_msg[0] = '\0';              //Mark the space separating the username and message as NULL, so we can directly read the username from the pointer
-    target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
-
-    //Find if anyone with the requested username is online
-    HASH_FIND_STR(active_users, target_username, target);
-    if(!target)
-    {
-        printf("User \"%s\" not found\n", target_username);
-        send_msg(current_client, "UserNotFound", 13);
-        return 0;
-    }
-
-    //Forward message to the target
-    sprintf(pmsg, "%s (PM): %s", current_client->username, target_msg);
-    if(!send_msg(target->c, pmsg, strlen(pmsg)+1))
-        return 0;
-
-    //Echo back to the sender
-    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, target_username, target_msg);
-    if(!send_msg(current_client, pmsg, strlen(pmsg)+1))
-        return 0;
-    
-    return 1;
-}
-
-static inline int register_client()
+static inline int register_client_connection()
 {
     char *username = malloc(USERNAME_LENG+1);
     User *result;
@@ -327,20 +286,69 @@ static inline int register_client()
     //Register the client's requested username
     result = malloc(sizeof(User));
     result->c = current_client;
-    strcpy(current_client->username, username);
     strcpy(result->username, username);
     HASH_ADD_STR(active_users, username, result);
+
+    //Update the client descriptor
+    current_client->connection_type = USER_CONNECTION;
+    strcpy(current_client->username, username);
     free(username);
 
     printf("Registering user \"%s\"\n", current_client->username);
     sprintf(buffer, "!regreply:username=%s", current_client->username);
-
     if(!send_msg(current_client, buffer, strlen(buffer)+1))
         return 0;
     
     sprintf(buffer, "!useronline=%s", current_client->username);
     send_bcast(buffer, strlen(buffer)+1, 1, 0);
     ++total_users;
+    
+    return 1;
+}
+
+
+/******************************/
+/*      Client Operations     */
+/******************************/
+
+static inline int client_pm()
+{
+    char *target_username;
+    char *target_msg;
+    char pmsg[MAX_MSG_LENG];
+    User *target;
+
+    //Find the occurance of the first space
+    target_msg = strchr(buffer, ' ');
+    if(!target_msg)
+    {
+        printf("Invalid username specified, or no message specified\n");
+        return 0;
+    }
+
+    //Seperate the target's name and message from the buffer
+    target_username = &buffer[1];
+    target_msg[0] = '\0';              //Mark the space separating the username and message as NULL, so we can directly read the username from the pointer
+    target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
+
+    //Find if anyone with the requested username is online
+    HASH_FIND_STR(active_users, target_username, target);
+    if(!target)
+    {
+        printf("User \"%s\" not found\n", target_username);
+        send_msg(current_client, "UserNotFound", 13);
+        return 0;
+    }
+
+    //Forward message to the target
+    sprintf(pmsg, "%s (PM): %s", current_client->username, target_msg);
+    if(!send_msg(target->c, pmsg, strlen(pmsg)+1))
+        return 0;
+
+    //Echo back to the sender
+    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, target_username, target_msg);
+    if(!send_msg(current_client, pmsg, strlen(pmsg)+1))
+        return 0;
     
     return 1;
 }
@@ -384,10 +392,17 @@ static inline int parse_client_command()
 {
     int bytes; 
 
+    /*Connection related commands*/
+
     if(strncmp(buffer, "!register:", 10) == 0)
-    {  
-        return register_client();
-    }
+        return register_client_connection();
+    
+
+    else if(strncmp(buffer, "!xfersend=", 10) == 0)
+        return register_send_transfer_connection();
+    
+    else if(strncmp(buffer, "!xferrecv=", 10) == 0)
+        return register_recv_transfer_connection();
 
     else if(strcmp(buffer, "!close") == 0)
     {
@@ -396,12 +411,12 @@ static inline int parse_client_command()
         return -1;
     }
 
-    else if(strncmp(buffer, "!userlist", 9) == 0)
-    {
-        return userlist();
-    }
 
-    /*Group Commands*/
+
+    /*Group related Commands*/
+
+    else if(strncmp(buffer, "!userlist", 9) == 0)
+        return userlist();
 
     else if(strncmp(buffer, "!newgroup=", 10) == 0)
         return create_new_group();
@@ -482,6 +497,7 @@ static inline int handle_new_connection()
     current_client = new_client;
     
     new_client->username[0] = '\0';                             //Empty username indicates an unregistered connection
+    new_client->connection_type = UNREGISTERED_CONNECTION;
     new_client->sockaddr_leng = sizeof(struct sockaddr_in);
     new_client->socketfd = accept(server_socketfd, (struct sockaddr*) &new_client->sockaddr, &new_client->sockaddr_leng);
 
@@ -491,7 +507,7 @@ static inline int handle_new_connection()
         free(new_client);
         return 0;
     }
-    printf("Accepted client %s:%d\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
+    printf("Accepted new connection %s:%d\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
 
     //Add the client into active_connections, and use its socketfd as the key.
     HASH_ADD_INT(active_connections, socketfd, new_client);

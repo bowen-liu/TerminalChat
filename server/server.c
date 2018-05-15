@@ -1,6 +1,4 @@
-#include "server_common.h"
-#include "group.h"
-#include "file_transfer_server.h"
+#include "server.h"
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 
@@ -38,8 +36,6 @@ User* get_current_client_user()
     return user;
 }
 
-static unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
-
 void disconnect_client(Client *c)
 {
     char disconnect_msg[BUFSIZE];
@@ -51,7 +47,7 @@ void disconnect_client(Client *c)
     close(c->socketfd);
 
     //Check if the connection is for a registered client
-    if(strlen(c->username) == 0)
+    if(current_client->connection_type == UNREGISTERED_CONNECTION)
     {
         printf("Dropping unregistered connection...\n");
         HASH_DEL(active_connections, c);
@@ -59,6 +55,18 @@ void disconnect_client(Client *c)
 
         return;
     }
+
+    //Check if the connection is for a file transfer
+    else if(current_client->connection_type == TRANSFER_CONNECTION)
+    {
+        printf("Closing transfer connection (%s) for \"%s\"...\n", 
+                (current_client->file_transfers->operation == SENDING_OP)? "SEND":"RECV", current_client->file_transfers->myself->username);
+        free(current_client->file_transfers);
+        HASH_DEL(active_connections, c);
+        free(c);
+        return;
+    }
+    
 
     //Leave participating chat groups
     disconnect_client_group_cleanup(c);
@@ -85,26 +93,36 @@ void disconnect_client(Client *c)
 /*     Basic Send/Receive     */
 /******************************/
 
+//TODO: Handle partial sends
+unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
+{
+    return send(socketfd, buffer, size, 0);
+}
+
 unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
     int bytes;
 
     if(size == 0)
+    {
+        printf("Cannot send this message. size=0 \n");
         return 0;
-        
+    }
     else if(size > MAX_MSG_LENG)
     {
         printf("Cannot send this message. Size too big\n");
         return 0;
     }
+
     
-    bytes = send(c->socketfd, buffer, size, 0);
-    if(bytes < 0)
+    bytes = send_msg_direct(c->socketfd, buffer, size);
+    if(bytes <= 0)
     {
         perror("Failed to send greeting message to client");
         disconnect_client(c);
         return 0;
     }
+    
     return bytes;
 }
 
@@ -113,7 +131,7 @@ unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int inclu
 {
     int count = 0;
     char bcast_msg[BUFSIZE];
-    Client *curr, *temp;
+    User *curr, *temp;
 
     if(is_control_msg)
         sprintf(bcast_msg, "%s", buffer);
@@ -121,12 +139,12 @@ unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int inclu
         sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
     
     //Send the message in the buffer to every active client
-    HASH_ITER(hh, active_connections, curr, temp)
+    HASH_ITER(hh, active_users, curr, temp)
     {
-        if(!include_current_client && curr->socketfd == current_client->socketfd)
+        if(!include_current_client && curr->c->socketfd == current_client->socketfd)
             continue;
-        
-        send_msg(curr, bcast_msg, strlen(bcast_msg)+1);
+
+        send_msg(curr->c, bcast_msg, strlen(bcast_msg)+1);
         ++count;
     }
     
@@ -144,7 +162,7 @@ static void send_long_msg()
         update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
      
     //Send the next chunk to the client
-    bytes = send(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size, 0);
+    bytes = send_msg_direct(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size);
     printf("Sending chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
 
     //Check exit conditions
@@ -237,6 +255,13 @@ static inline int register_client_connection()
     char *new_username;
     int duplicates = 0, max_duplicates_allowed;
 
+    if(current_client->connection_type != UNREGISTERED_CONNECTION)
+    {
+        printf("Connection already registered. Type: %d.\n", current_client->connection_type);
+        disconnect_client(current_client);
+        return 0;
+    }
+
     sscanf(buffer, "!register:username=%s", username);
     if(!name_is_valid(username))
         return 0;
@@ -296,13 +321,13 @@ static inline int register_client_connection()
 
     printf("Registering user \"%s\"\n", current_client->username);
     sprintf(buffer, "!regreply:username=%s", current_client->username);
-    if(!send_msg(current_client, buffer, strlen(buffer)+1))
-        return 0;
+    send_msg(current_client, buffer, strlen(buffer)+1);
     
     sprintf(buffer, "!useronline=%s", current_client->username);
     send_bcast(buffer, strlen(buffer)+1, 1, 0);
     ++total_users;
-    
+
+    printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
     return 1;
 }
 
@@ -467,8 +492,14 @@ static inline int handle_client_msg()
     if(!bytes)
         return 0;
     
+
+    //If this connection is a transfer connection, forward the data contained directly to its target
+    if(current_client->connection_type == TRANSFER_CONNECTION)
+        return client_data_forward(buffer, bytes); 
+
+    
     printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
-    printf("%s\n", buffer);
+    printf("%.*s\n", bytes, buffer);
 
     //Parse as a command if message begins with '!'
     if(buffer[0] == '!')
@@ -507,7 +538,7 @@ static inline int handle_new_connection()
         free(new_client);
         return 0;
     }
-    printf("Accepted new connection %s:%d\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
+    printf("Accepted new connection %s:%d (fd=%d)\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port), new_client->socketfd);
 
     //Add the client into active_connections, and use its socketfd as the key.
     HASH_ADD_INT(active_connections, socketfd, new_client);
@@ -570,28 +601,20 @@ static inline void server_main_loop()
         {
             //When the administrator enters a command from stdin
             if(events[i].data.fd == 0)
-            {
                 handle_stdin();
-            }
             
             //When a new connection arrives to the server socket, accept it
             else if(events[i].data.fd == server_socketfd)
-            {
                 handle_new_connection();
-            }
 
             //When an event is occuring on an existing client connection
             else
             {                
                 HASH_FIND_INT(active_connections, &events[i].data.fd, current_client);
 
-                //Handle EPOLLRDHUP: the client has closed its connection unexpectedly
+                //Handle EPOLLRDHUP: the client has closed its connection
                 if(events[i].events & EPOLLRDHUP)
-                {
-                    printf("Client \"%s\" has closed its connection.\n", current_client->username);
                     disconnect_client(current_client);
-                    continue;
-                }
                 
                 //Handles EPOLLIN (ready for reading)
                 else if(events[i].events & EPOLLIN)

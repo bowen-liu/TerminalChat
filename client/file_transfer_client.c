@@ -14,9 +14,19 @@
 /******************************/ 
 void cleanup_transfer_args(FileXferArgs *args)
 {
+    //Close network connections
+    if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
+        perror("Failed to unregister the disconnected client from epoll!");
+    
     close(args->socketfd);
 
-    munmap((void*)args->file_buffer, args->filesize);
+    //Free or unmap transfer buffers
+    if(args->operation == SENDING_OP)
+        munmap((void*)args->file_buffer, args->filesize);
+    else
+        free(args->file_buffer);
+    
+    //Close file and cleanup others
     fclose(args->file_fp);
     memset(args, 0, sizeof(FileXferArgs));
 }
@@ -107,7 +117,7 @@ int new_send_cmd(FileXferArgs *args)
 
     //Open the file with mmap for reading
     args->file_buffer = mmap(NULL, args->filesize, PROT_READ, MAP_SHARED, fileno(args->file_fp), 0);
-    if(!args->file_buffer)
+    if(args->file_buffer == MAP_FAILED)
     {
         perror("Failed to map sending file to memory.");
         fclose(args->file_fp);
@@ -153,6 +163,8 @@ int recver_accepted_file(char* buffer)
     
     strcpy(file_transfers->token, accepted_token);
 
+
+
     /*******************************************************/
     /* Open new connection to server for file transferring */
     /*******************************************************/
@@ -190,8 +202,8 @@ int recver_accepted_file(char* buffer)
     printf("Sender has successfully established to the server!\n");
 
     //Register the new connection with epoll and set it as nonblocking
-    /*fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
-    register_fd_with_epoll(epoll_fd, args->socketfd, CLIENT_EPOLL_FLAGS);*/
+    fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
+    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLOUT);
 
     return args->socketfd;
 }
@@ -199,38 +211,29 @@ int recver_accepted_file(char* buffer)
 
 int file_send_next(FileXferArgs *args)
 {
-    int remaining_size = args->filesize - args->transferred;
+    size_t remaining_size = args->filesize - args->transferred;
     int bytes;
-
-    //Start of a new long send. Register the client's FD to signal on EPOLLOUT
-    /*if(args->transferred == 0)
-        update_epoll_events(epoll_fd, args->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);*/
      
     //Send the next chunk to the client
-    bytes = send(args->socketfd, &args->file_buffer[args->transferred], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size, 0);
+    //bytes = send(args->socketfd, &args->file_buffer[args->transferred], remaining_size, 0);
+    bytes = send_msg_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
     printf("Sending chunk (%d): %.*s\n", bytes, bytes, &args->file_buffer[args->transferred]);
 
-    //Check exit conditions
     if(bytes <= 0)
     {
         perror("Failed to send long message");
         printf("Sent %zu\\%zu bytes to target \"%s\" before failure.\n", args->transferred, args->filesize, args->target_name);
-    }
-    else
-    {
-        args->transferred += bytes;
-        printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
-
-        if(args->transferred < args->filesize)
-            return bytes;
+        cancel_transfer(args);
+        return 0;
     }
 
-    //Cleanup resources when transfer completes or fails
-    cleanup_transfer_args(args);
+    args->transferred += bytes;
+    printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
 
-    //Remove the EPOLLOUT notification once long send has completed
-    //update_epoll_events(epoll_fd, args->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
-    
+    if(args->transferred < args->filesize)
+        return bytes;
+
+    cancel_transfer(args);
     return 0;
 }
 
@@ -306,14 +309,17 @@ int new_recv_cmd(FileXferArgs *args)
     }
     printf("Created file \"%s\" for writing...\n", args->target_file);
 
-    //Create a target file for appending (binary mode)
+    //mmap write is currently broken for WSL. We'll just append the received data for now. 
+    
+    //Create a target file for writing (binary mode)
     args->file_fp = fopen(args->target_file, "ab");
     if(!args->file_fp)
     {
         perror("Cannot create file for writing.");
         return 0;
     }
-
+    
+    args->file_buffer = malloc(RECV_CHUNK_SIZE);
     args->operation = RECVING_OP;
 
     //Tell the server I am accepting this file
@@ -360,8 +366,8 @@ int new_recv_cmd(FileXferArgs *args)
     printf("Receiver has successfully established to the server!\n");
 
     //Register the new connection with epoll and set it as nonblocking
-    /*fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
-    register_fd_with_epoll(epoll_fd, args->socketfd, CLIENT_EPOLL_FLAGS);*/
+    fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
+    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLIN);
 
     return args->socketfd;
 }
@@ -369,35 +375,37 @@ int new_recv_cmd(FileXferArgs *args)
 
 int file_recv_next(FileXferArgs *args)
 {
-    int bytes, i;
-    char header[48];
-    char *longcmd;
+    size_t remaining_size = args->filesize - args->transferred;
+    int bytes;
 
-    bytes = recv(args->socketfd, &args->file_buffer[args->transferred], LONG_RECV_PAGE_SIZE, 0);
+    bytes = recv(args->socketfd, args->file_buffer, (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE, 0);
 
-    //Check exit conditions
     if(bytes <= 0)
     {
         perror("Failed to receive long message from server.");
         printf("%zu\\%zu bytes received before failure.\n", args->transferred, args->filesize);
+        cancel_transfer(args);
+        return 0;
     }
-    else
+    
+
+    //printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, args->file_buffer);
+    
+    //Append the received chunk to local file
+    if(write(fileno(args->file_fp), args->file_buffer, bytes) != bytes)
     {
-        printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, &args->file_buffer[args->transferred-1]);
-
-        args->transferred += bytes;
-        printf("Current Buffer: %.*s\n", (int)args->transferred, args->file_buffer);
-        printf("%zu\\%zu bytes received\n", args->transferred, args->filesize);
-
-        //Has the entire message been received?
-        if(args->transferred < args->filesize)
-            return bytes;
-
-        printf("Completed file transfer!\n");
+        perror("Failed to write correct number of bytes to receiving file.");
     }
 
-    //Free resources used for the long recv
-    cleanup_transfer_args(args);
+    args->transferred += bytes;
+    printf("Current Buffer: %.*s\n", (int)args->transferred, args->file_buffer);
+    printf("%zu\\%zu bytes received\n", args->transferred, args->filesize);
 
-    return 0;
+    //Has the entire message been received?
+    if(args->transferred < args->filesize)
+        return bytes;
+
+    printf("Completed file transfer!\n");
+    cancel_transfer(args);
+    return args->transferred;
 }

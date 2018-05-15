@@ -581,14 +581,32 @@ static inline void client_main_loop()
                 if(buffer[0] == '!')
                     parse_control_message(buffer);
                 else
-                    printf("%s\n", buffer);
+                    //printf("%s\n", buffer);
+                    printf("(%d) %s\n", my_socketfd, buffer);
             }
 
             //Data from other transfer connections
             else
             {
-                if((events[i].data.fd == file_transfers->socketfd))
-                    printf("Data transfer!\n");
+                if(events[i].data.fd != file_transfers->socketfd)
+                {
+                    printf("wrong socketfd\n");
+                    continue;
+                } 
+                
+                //The transfer connection is ready for receiving
+                if(events[i].events & EPOLLIN)
+                {
+                    printf("recv ready! (%d)\n", file_transfers->socketfd);
+                    file_recv_next(file_transfers);
+                }
+                
+                //The transfer connection is ready for sending
+                else if(events[i].events & EPOLLOUT)
+                {
+                    printf("send ready!\n");
+                    file_send_next(file_transfers);
+                }
             }
         }
     }

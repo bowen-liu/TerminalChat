@@ -9,8 +9,10 @@
 
 typedef struct filexferargs_server {
 
-    User *target;
+    int xfer_socketfd;
     enum sendrecv_op operation;
+    User *myself;
+    User *target;
 
     char filename[MAX_FILENAME];
     size_t filesize;
@@ -23,7 +25,7 @@ typedef struct filexferargs_server {
 int register_recv_transfer_connection();
 int register_send_transfer_connection();
 
-int client_transfer();
+int client_data_forward(char *buffer, size_t bytes);
 int new_client_transfer();
 int accepted_file_transfer();
 

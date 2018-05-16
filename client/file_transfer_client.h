@@ -21,12 +21,12 @@ typedef struct {
     int socketfd;
     char token[TRANSFER_TOKEN_SIZE+1];
 
-
     char target_file[MAX_FILE_PATH+1];
     FILE *file_fp;
     char *file_buffer;
     size_t filesize;
     size_t transferred;
+    unsigned int checksum;
 
 } FileXferArgs;     //Also see FileXferArgs_Server
 

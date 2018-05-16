@@ -9,26 +9,31 @@
 #include <errno.h>
 
 
+
 /******************************/
 /*           Helpers          */
 /******************************/ 
+
+//Defined in library/crc32/crc32.c
+extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);
+
 void cleanup_transfer_args(FileXferArgs *args)
 {
     //Close network connections
     if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!");
-    
     close(args->socketfd);
 
-    //Free or unmap transfer buffers
+    //Free or unmap transfer buffers, and close files
     if(args->operation == SENDING_OP)
         munmap((void*)args->file_buffer, args->filesize);
     else
         free(args->file_buffer);
-    
-    //Close file and cleanup others
     fclose(args->file_fp);
-    memset(args, 0, sizeof(FileXferArgs));
+    
+    //Free the args object
+    free(args);
+    file_transfers = NULL;
 }
 
 void cancel_transfer(FileXferArgs *args)
@@ -78,7 +83,8 @@ void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
     char *filename_start;
 
     memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", args->target_file, &args->filesize, args->target_name);
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", 
+            args->target_file, &args->filesize, args->target_name);
 
     //Extract the filename from the target file path
     filename_start = strrchr(args->target_file, '/');
@@ -93,14 +99,16 @@ void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
 void parse_accept_cmd(char *buffer, FileXferArgs *args)
 {
     memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!acceptfile=%[^,],size=%zu,target=%[^,],token=%s", 
-            args->filename, &args->filesize, args->target_name, args->token);
+    sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            args->filename, &args->filesize, &args->checksum, args->target_name, args->token);
 }
 
 
 int new_send_cmd(FileXferArgs *args)
 {
     char *filename_start;
+
+    args->operation = SENDING_OP;
 
     //Attempt to open the file for reading (binary mode)
     args->file_fp = fopen(args->target_file, "rb");
@@ -124,8 +132,17 @@ int new_send_cmd(FileXferArgs *args)
         return 0;
     }
 
-    args->operation = SENDING_OP;
+    //Calculate the file's checksum (crc32)
+    args->checksum = xcrc32(args->file_buffer, args->filesize, CRC_INIT);
+
+    //Rewrite the existing message in buffer with the de-localized filename
+    sprintf(buffer, "!sendfile=%s,size=%zu,crc=%x,target=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name);
+    printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes, checksum: %x)\n", 
+            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
     
+    //The new message in buffer will be sent automatically when this function returns back to client_main_loop()
+
     return 1;
 }
 
@@ -135,32 +152,35 @@ int recver_accepted_file(char* buffer)
 {
     char accepted_filename[FILENAME_MAX+1];
     size_t accepted_filesize;
+    unsigned int accepted_checksum;
     char accepted_target_name[USERNAME_LENG+1];
     char accepted_token[TRANSFER_TOKEN_SIZE+1];
 
     FileXferArgs *args = file_transfers;
     int matches = 0;
 
-    sscanf(buffer, "!acceptfile=%[^,],size=%zu,target=%[^,],token=%s", 
-            accepted_filename, &accepted_filesize, accepted_target_name, accepted_token);
+    sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            accepted_filename, &accepted_filesize, &accepted_checksum, accepted_target_name, accepted_token);
 
     //Validate this transfer matches what we intended to send
     if(file_transfers)
         if(strcmp(file_transfers->target_name, accepted_target_name) == 0)
             if(strcmp(file_transfers->filename, accepted_filename) == 0)
                 if(file_transfers->filesize == accepted_filesize)
-                    matches = 1;
+                    if(file_transfers->checksum == accepted_checksum)
+                        matches = 1;
     
     if(!matches)
     {
-        printf("No pending file send for file \"%s\" (%zu bytes) for user \"%s\".\n",
-                accepted_filename, accepted_filesize, accepted_target_name);
+        printf("No pending file send for file \"%s\" (%zu bytes, checksum: %x) for user \"%s\".\n",
+                accepted_filename, accepted_filesize, accepted_checksum, accepted_target_name);
         return 0;
     }
 
-    printf("Receiver \"%s\" has accepted to receive the file \"%s\" (%zu bytes, token: %s)!\n" ,
-            accepted_filename, accepted_target_name, accepted_filesize, accepted_token);
+    printf("Receiver \"%s\" has accepted to receive the file \"%s\" (%zu bytes, token: %s, checksum: %x)!\n",
+            accepted_filename, accepted_target_name, accepted_filesize, accepted_token, accepted_checksum);
     
+    //Record the server assigned token
     strcpy(file_transfers->token, accepted_token);
 
 
@@ -176,8 +196,9 @@ int recver_accepted_file(char* buffer)
     }
 
     //Tell server I'm using this connection to download a file
-    sprintf(buffer, "!xfersend=%s,size=%zu,sender=%s,recver=%s,token=%s", 
-            file_transfers->filename, file_transfers->filesize, my_username, file_transfers->target_name, file_transfers->token);
+    sprintf(buffer, "!xfersend=%s,size=%zu,crc=%x,sender=%s,recver=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, my_username, file_transfers->target_name, file_transfers->token);
+    
     if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
     {
         perror("Failed to send transfer registration.");
@@ -217,7 +238,7 @@ int file_send_next(FileXferArgs *args)
     //Send the next chunk to the client
     //bytes = send(args->socketfd, &args->file_buffer[args->transferred], remaining_size, 0);
     bytes = send_msg_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
-    printf("Sending chunk (%d): %.*s\n", bytes, bytes, &args->file_buffer[args->transferred]);
+    //printf("Sending chunk (%d): %.*s\n", bytes, bytes, &args->file_buffer[args->transferred]);
 
     if(bytes <= 0)
     {
@@ -249,7 +270,7 @@ int file_send_next(FileXferArgs *args)
 void parse_send_cmd_recver(char *buffer, FileXferArgs *args)
 {
     memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%[^,],token=%s", args->filename, &args->filesize, args->target_name, args->token);
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", args->filename, &args->filesize, &args->checksum, args->target_name, args->token);
 
     //You must now fill args->socketfd yourself after calling this function, if you choose to accept the file afterwards
 }
@@ -323,8 +344,8 @@ int new_recv_cmd(FileXferArgs *args)
     args->operation = RECVING_OP;
 
     //Tell the server I am accepting this file
-    sprintf(buffer, "!acceptfile=%s,size=%zu,target=%s,token=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->target_name, file_transfers->token);
+    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
     send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
 
 
@@ -340,8 +361,8 @@ int new_recv_cmd(FileXferArgs *args)
     }
 
     //Tell server I'm using this connection to download a file
-    sprintf(buffer, "!xferrecv=%s,size=%zu,sender=%s,recver=%s,token=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->target_name, my_username, file_transfers->token);
+    sprintf(buffer, "!xferrecv=%s,size=%zu,crc=%x,sender=%s,recver=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, my_username, file_transfers->token);
     if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
     {
         perror("Failed to send transfer registration.");
@@ -373,6 +394,7 @@ int new_recv_cmd(FileXferArgs *args)
 }
 
 
+int verify_received_file(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args)
 {
     size_t remaining_size = args->filesize - args->transferred;
@@ -388,9 +410,6 @@ int file_recv_next(FileXferArgs *args)
         return 0;
     }
     
-
-    //printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, args->file_buffer);
-    
     //Append the received chunk to local file
     if(write(fileno(args->file_fp), args->file_buffer, bytes) != bytes)
     {
@@ -398,14 +417,71 @@ int file_recv_next(FileXferArgs *args)
     }
 
     args->transferred += bytes;
-    printf("Current Buffer: %.*s\n", (int)args->transferred, args->file_buffer);
-    printf("%zu\\%zu bytes received\n", args->transferred, args->filesize);
+    printf("%zu\\%zu bytes received from \"%s\"\n", args->transferred, args->filesize, args->target_name);
 
     //Has the entire message been received?
     if(args->transferred < args->filesize)
         return bytes;
-
     printf("Completed file transfer!\n");
+    
+
+    //Verify file integrity, and then cleanup and close the transfer connection
+    verify_received_file(args);
+    return bytes;
+}
+
+int verify_received_file(FileXferArgs *args)
+{
+    char filepath[MAX_FILE_PATH+1];
+    unsigned int expected_crc, received_crc;
+    size_t expected_size;
+
+    int filefd;
+    struct stat fileinfo;
+    char *filemap;
+
+    //Record the information we need, and then close/free the transfer connection
+    expected_size = args->filesize;
+    expected_crc = args->checksum;
+    strcpy(filepath, args->target_file);
     cancel_transfer(args);
-    return args->transferred;
+
+    //Open the received file for reading
+    filefd = open(filepath, O_RDONLY);
+    if(!filefd)
+    {
+        perror("Failed to open received file for verification.");
+        return 0;
+    }
+
+    //Verify the received file's size
+    fstat(filefd, &fileinfo);
+    if(fileinfo.st_size != expected_size)
+    {
+        printf("Mismatched file size. Expected: %zu, Received: %zu\n", expected_size, fileinfo.st_size);
+        close(filefd);
+        return 0;
+    }
+
+    //Map the received file into memory and verify its checksum
+    filemap = mmap(NULL, fileinfo.st_size, PROT_READ, MAP_SHARED, filefd, 0);
+    if(!filemap)
+    {
+        perror("Failed to map received file in memory for verification.");
+        close(filefd);
+        return 0;
+    }
+
+    received_crc = xcrc32(filemap, fileinfo.st_size, CRC_INIT);
+    close(filefd);
+    munmap((void*)filemap, args->filesize);
+
+    if(received_crc != expected_crc)
+    {
+        printf("Mismatched checksum. Expected: %x, Received: %x\n", expected_crc, received_crc);
+        return 0;
+    }
+
+    printf("Received file \"%s\" is intact. Size: %zu, Checksum: %x\n", filepath, fileinfo.st_size, received_crc);
+    return 1;
 }

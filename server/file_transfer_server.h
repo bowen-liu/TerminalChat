@@ -17,6 +17,7 @@ typedef struct filexferargs_server {
     char filename[MAX_FILENAME];
     size_t filesize;
     size_t transferred;
+    unsigned int checksum;
     char token[TRANSFER_TOKEN_SIZE+1];
 
 } FileXferArgs_Server;

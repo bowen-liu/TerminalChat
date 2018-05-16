@@ -2,8 +2,11 @@ CC=gcc
 
 all : clean common.o server.o client.o main
 
-#Common
-common.o:
+#Common/Libraries
+crc32.o:
+	$(CC) -c library/crc32/crc32.c
+
+common.o: crc32.o
 	$(CC) -c common/common.c
 
 

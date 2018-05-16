@@ -235,9 +235,6 @@ static int outgoing_file()
     if(!new_send_cmd(file_transfers))
         return 0;
 
-    //Rewrite the existing message in buffer with the de-localized filename
-    sprintf(buffer, "!sendfile=%s,size=%zu,target=%s", file_transfers->filename, file_transfers->filesize, file_transfers->target_name);
-    printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes)\n", file_transfers->target_name, file_transfers->filename, file_transfers->filesize);
     return 1;
 }
 
@@ -581,8 +578,7 @@ static inline void client_main_loop()
                 if(buffer[0] == '!')
                     parse_control_message(buffer);
                 else
-                    //printf("%s\n", buffer);
-                    printf("(%d) %s\n", my_socketfd, buffer);
+                    printf("%s\n", buffer);
             }
 
             //Data from other transfer connections
@@ -596,17 +592,11 @@ static inline void client_main_loop()
                 
                 //The transfer connection is ready for receiving
                 if(events[i].events & EPOLLIN)
-                {
-                    printf("recv ready! (%d)\n", file_transfers->socketfd);
                     file_recv_next(file_transfers);
-                }
                 
                 //The transfer connection is ready for sending
                 else if(events[i].events & EPOLLOUT)
-                {
-                    printf("send ready!\n");
                     file_send_next(file_transfers);
-                }
             }
         }
     }

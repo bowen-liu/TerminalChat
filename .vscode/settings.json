@@ -3,6 +3,8 @@
         "client.h": "c",
         "server.h": "c",
         "common.h": "c",
-        "server_common.h": "c"
+        "server_common.h": "c",
+        "types.h": "c",
+        "file_transfer_server.h": "c"
     }
 }

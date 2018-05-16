@@ -9,10 +9,13 @@
 /*          Helpers           */
 /******************************/ 
 
+//Defined in library/crc32/crc32.c
+extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);
+
 void print_server_xferargs(FileXferArgs_Server *args)
 {    
-    printf("Me: \"%s\" (fd=%d), Target: \"%s\", OP: %s, Filename: \"%s\", Filesize: %zu, Transferred: %zu, Token: %s\n", 
-            args->myself->username, args->xfer_socketfd, args->target->username, (args->operation == SENDING_OP)? "Send":"Recv", args->filename, args->filesize, args->transferred, args->token);
+    printf("Me: \"%s\" (fd=%d), Target: \"%s\", OP: %s, Filename: \"%s\", Filesize: %zu, Checksum: %x, Transferred: %zu, Token: %s\n", 
+            args->myself->username, args->xfer_socketfd, args->target->username, (args->operation == SENDING_OP)? "Send":"Recv", args->filename, args->filesize, args->checksum, args->transferred, args->token);
 }
 
 void generate_token(char* dest, size_t bytes)
@@ -55,18 +58,15 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
             return 0;
         }
 
-        //Return the pointer of myself
-        if(request_user_ptr)
-            *request_user_ptr = request_user;
-
         //Match the information in the target user's transfer args with this request
         xferargs = request_user->c->file_transfers;
         if(xferargs && xferargs->operation == request->operation)
             if(strcmp(xferargs->token, request->token) == 0)
                 if(strcmp(xferargs->filename, request->filename) == 0)
                     if(xferargs->filesize == request->filesize)
-                        if(xferargs->transferred == 0)
-                            matches = 1;
+                        if(xferargs->checksum == request->checksum)
+                            if(xferargs->transferred == 0)
+                                matches = 1;
 
         if(!matches)
         {
@@ -79,11 +79,7 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
     {
         //Use current_client if request_username is not not specified 
         request_username = current_client->username;
-        request_user = get_current_client_user();
-
-        //Return the pointer of myself
-        if(request_user_ptr)
-            *request_user_ptr = request_user;
+        request_user = get_current_client_user();  
     }
          
 
@@ -101,10 +97,6 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
         return 0;
     }
 
-    //Return the pointer of the target
-    if(target_user_ptr)
-        *target_user_ptr = target_user;
-
     //Match the information in the target user's transfer args with this request
     xferargs = target_user->c->file_transfers;
     expected_target_op = (request->operation == SENDING_OP)? RECVING_OP:SENDING_OP;
@@ -115,14 +107,21 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
             if(strcmp(xferargs->target->username, request_username) == 0)
                 if(strcmp(xferargs->filename, request->filename) == 0)
                     if(xferargs->filesize == request->filesize)
-                        if(xferargs->transferred == 0)
-                            matches = 1;
+                        if(xferargs->checksum == request->checksum)
+                            if(xferargs->transferred == 0)
+                                matches = 1;
 
     if(!matches)
     {
         printf("No matching file found with sender \"%s\".\n", target_username);
         return 0;
     }
+
+    //Return the pointer of my user descriptor, and the target's user descriptor
+    if(request_user_ptr)
+        *request_user_ptr = request_user;
+    if(target_user_ptr)
+        *target_user_ptr = target_user;
 
     return 1;
 }
@@ -150,8 +149,8 @@ int register_send_transfer_connection()
     printf("\"%s\"\n", buffer);
 
     
-    sscanf(buffer, "!xfersend=%[^,],size=%zu,sender=%[^,],recver=%[^,],token=%[^,]", 
-            request_args.filename, &request_args.filesize, sender_name, recver_name, request_args.token);
+    sscanf(buffer, "!xfersend=%[^,],size=%zu,crc=%x,sender=%[^,],recver=%[^,],token=%[^,]", 
+            request_args.filename, &request_args.filesize, &request_args.checksum, sender_name, recver_name, request_args.token);
     request_args.operation = SENDING_OP;
     
     if(!validate_transfer_target(&request_args, sender_name, recver_name, &myself, &target))
@@ -175,9 +174,8 @@ int register_send_transfer_connection()
 
     sprintf(buffer, "Accepted");
     send_msg(current_client, buffer, strlen(buffer)+1);
-    printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n",
-            myself->c->file_transfers->filename, myself->c->file_transfers->filesize, myself->c->file_transfers->token, sender_name, recver_name);
-    
+    printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
+            xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
     return 0;
 }
 
@@ -199,8 +197,8 @@ int register_recv_transfer_connection()
     request_args.xfer_socketfd = current_client->socketfd;
     request_args.operation = RECVING_OP;
 
-    sscanf(buffer, "!xferrecv=%[^,],size=%zu,sender=%[^,],recver=%[^,],token=%[^,]", 
-            request_args.filename, &request_args.filesize, sender_name, recver_name, request_args.token);
+    sscanf(buffer, "!xferrecv=%[^,],size=%zu,crc=%x,sender=%[^,],recver=%[^,],token=%[^,]", 
+            request_args.filename, &request_args.filesize, &request_args.checksum, sender_name, recver_name, request_args.token);
 
     if(!validate_transfer_target(&request_args, recver_name, sender_name, &myself, &target))
     {
@@ -224,7 +222,7 @@ int register_recv_transfer_connection()
     sprintf(buffer, "Accepted");
     send_msg(current_client, buffer, strlen(buffer)+1);
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
-            request_args.filename, request_args.filesize, request_args.token, sender_name, recver_name);
+            xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
     return 0;
 }
@@ -237,33 +235,35 @@ int register_recv_transfer_connection()
 
 int new_client_transfer()
 {
-    FileXferArgs_Server *args = calloc(1, sizeof(FileXferArgs_Server));
+    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
 
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", args->filename, &args->filesize, target_name);
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%s", 
+            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
     //Find the target user specified
-    HASH_FIND_STR(active_users, target_name, args->target);
-    if(!args->target)
+    HASH_FIND_STR(active_users, target_name, xferargs->target);
+    if(!xferargs->target)
     {
         printf("User \"%s\" not found\n", target_name);
-        free(args);
+        free(xferargs);
         send_msg(current_client, "UserNotFound", 13);
         return 0;
     }
 
-    current_client->file_transfers = args;
-    args->operation = SENDING_OP;
+    current_client->file_transfers = xferargs;
+    xferargs->operation = SENDING_OP;
 
     //Generate an unique token for this transfer
-    generate_token(args->token, TRANSFER_TOKEN_SIZE);
+    generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
 
     //Send out a file transfer request to the target
-    sprintf(buffer, "!sendfile=%s,size=%zu,target=%s,token=%s", args->filename, args->filesize, current_client->username, args->token);
-    printf("Forwarding file transfer request from user \"%s\" to  user \"%s\", for file \"%s\" (%zu bytes, token: %s)\n", 
-            current_client->username, args->target->username, args->filename, args->filesize, args->token);
+    sprintf(buffer, "!sendfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
+    printf("Forwarding file transfer request from user \"%s\" to  user \"%s\", for file \"%s\" (%zu bytes, token: %s, checksum: %x)\n", 
+            current_client->username, xferargs->target->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum);
 
-    return send_msg(args->target->c, buffer, strlen(buffer)+1);
+    return send_msg(xferargs->target->c, buffer, strlen(buffer)+1);
 }
 
 int accepted_file_transfer()
@@ -272,9 +272,10 @@ int accepted_file_transfer()
     User *target;
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
 
-    sscanf(buffer, "!acceptfile=%[^,],size=%zu,target=%[^,],token=%s", xferargs->filename, &xferargs->filesize, target_username, xferargs->token);
-    printf("User \"%s\" has accepted the file \"%s\" (%zu bytes, token: %s) from user \"%s\"\n", 
-            current_client->username, xferargs->filename, xferargs->filesize, xferargs->token, target_username);
+    sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_username, xferargs->token);
+    printf("User \"%s\" has accepted the file \"%s\" (%zu bytes, token: %s, checksum: %x) from user \"%s\"\n", 
+            current_client->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, target_username);
 
     xferargs->operation = RECVING_OP;
 
@@ -291,7 +292,8 @@ int accepted_file_transfer()
     current_client->file_transfers = xferargs;
     
     //Forward the accept message to the sender
-    sprintf(buffer, "!acceptfile=%s,size=%zu,target=%s,token=%s", xferargs->filename, xferargs->filesize, current_client->username, xferargs->token);
+    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
     return send_msg(xferargs->target->c, buffer, strlen(buffer)+1);
 }
 
@@ -309,14 +311,7 @@ int client_data_forward(char *buffer, size_t bytes)
     
     recver_xfer_socketfd = current_client->file_transfers->target->c->file_transfers->xfer_socketfd;
     
-    printf("Forwarding %zu bytes from \"%s\" to \"%s\" (fd=%d).\n", bytes, myname, current_client->file_transfers->target->username, recver_xfer_socketfd);
-    //printf("%.*s\n", bytes, buffer);
-
-    printf("\nMy sender args: \n");
-    print_server_xferargs(current_client->file_transfers);
-
-    printf("\nReceiver args: \n");
-    print_server_xferargs(current_client->file_transfers->target->c->file_transfers);
+    printf("Forwarding %zu bytes from \"%s\" to \"%s\".\n", bytes, myname, current_client->file_transfers->target->username);
     
     current_client->file_transfers->transferred += bytes;
     return send_msg_direct(recver_xfer_socketfd, buffer, bytes);

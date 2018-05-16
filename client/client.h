@@ -24,6 +24,7 @@ extern FileXferArgs *file_transfers;
 
 extern char *buffer;
 
+unsigned int send_direct_client(int socket, char* buffer, size_t size);
 unsigned int send_msg_client(int socket, char* buffer, size_t size);
 unsigned int recv_msg_client(int socket, char* buffer, size_t size);
 

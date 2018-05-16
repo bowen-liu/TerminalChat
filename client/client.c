@@ -33,6 +33,11 @@ FileXferArgs *file_transfers;
 /*     Basic Send/Receive     */
 /******************************/
 
+unsigned int send_direct_client(int socket, char* buffer, size_t size)
+{
+    return send(socket, buffer, size, 0);
+}
+
 unsigned int send_msg_client(int socket, char* buffer, size_t size)
 {
     int bytes;
@@ -46,7 +51,7 @@ unsigned int send_msg_client(int socket, char* buffer, size_t size)
         return 0;
     }
     
-    bytes = send(socket, buffer, size, 0);
+    bytes = send_direct_client(socket, buffer, size);
     if(bytes < 0)
     {
         perror("Failed to sent message to the server...");
@@ -583,13 +588,26 @@ static inline void client_main_loop()
 
             //Data from other transfer connections
             else
-            {
-                if(events[i].data.fd != file_transfers->socketfd)
+            {   
+                if(!file_transfers)
                 {
-                    printf("wrong socketfd\n");
+                    printf("No pending file transfers. Ignoring event...\n");
                     continue;
-                } 
+                }
                 
+                //The transfer connection has been terminated by the server (upon completion or failure)
+                if(events[i].events & EPOLLRDHUP)
+                {
+                    printf("Server has closed our transfer connection.\n");
+                    
+                    if(file_transfers->transferred != file_transfers->filesize)
+                        printf("Transferred %zu\\%zu bytes with \"%s\" before failure.\n", 
+                                file_transfers->transferred, file_transfers->filesize, file_transfers->target_name);
+
+                    cancel_transfer(file_transfers);
+                }
+                    
+
                 //The transfer connection is ready for receiving
                 if(events[i].events & EPOLLIN)
                     file_recv_next(file_transfers);

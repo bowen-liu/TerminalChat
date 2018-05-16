@@ -8,7 +8,7 @@
 #include <unistd.h>
 
 
-#define RECV_CHUNK_SIZE     32
+#define RECV_CHUNK_SIZE     BUFSIZE
 #define CLIENT_RECV_FOLDER "files_received"
 
 
@@ -32,7 +32,7 @@ typedef struct {
 
 
 
-void cleanup_transfer_args(FileXferArgs *args);
+void cancel_transfer(FileXferArgs *args);
 
 /*Sending*/
 void parse_send_cmd_sender(char *buffer, FileXferArgs *args);

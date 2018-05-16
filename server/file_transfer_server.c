@@ -302,6 +302,7 @@ int client_data_forward(char *buffer, size_t bytes)
 {
     int recver_xfer_socketfd;
     char *myname = current_client->file_transfers->myself->username;
+    int bytes_sent;
 
     if(current_client->file_transfers->operation == RECVING_OP)
     {
@@ -310,10 +311,20 @@ int client_data_forward(char *buffer, size_t bytes)
     }
     
     recver_xfer_socketfd = current_client->file_transfers->target->c->file_transfers->xfer_socketfd;
-    
-    printf("Forwarding %zu bytes from \"%s\" to \"%s\".\n", bytes, myname, current_client->file_transfers->target->username);
-    
     current_client->file_transfers->transferred += bytes;
-    return send_msg_direct(recver_xfer_socketfd, buffer, bytes);
+
+    printf("Forwarding %zu bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
+            bytes, current_client->file_transfers->transferred, current_client->file_transfers->filesize, myname, current_client->file_transfers->target->username);
+    
+    bytes_sent = send_msg_direct(recver_xfer_socketfd, buffer, bytes);
+
+    //Close the sender's connection if the entire file has been forwarded
+    if(current_client->file_transfers->transferred == current_client->file_transfers->filesize)
+    {
+        printf("All bytes for file transfer has been forwarded.\n");
+        disconnect_client(current_client);
+    }
+
+    return bytes_sent;
 }
 

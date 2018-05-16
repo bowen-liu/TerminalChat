@@ -194,7 +194,7 @@ int userlist_group(char *group_name)
         return 0;
     }
 
-    userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + EXTRA_CHARS));
+    userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + 128));
     sprintf(userlist_msg, "!userlist=%d,group=%s", group->member_count, group_name);
     printf("%s\n", userlist_msg);
 

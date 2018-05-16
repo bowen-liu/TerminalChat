@@ -394,7 +394,7 @@ static inline int userlist()
         return userlist_group(group_name);
     }
 
-    userlist_msg = malloc(total_users * (USERNAME_LENG+1 + EXTRA_CHARS));
+    userlist_msg = malloc(total_users * (USERNAME_LENG+1 + 128));
     sprintf(userlist_msg, "!userlist=%d", total_users);
     userlist_size = strlen(userlist_msg);
 

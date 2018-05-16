@@ -20,9 +20,16 @@ extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init
 void cleanup_transfer_args(FileXferArgs *args)
 {
     //Close network connections
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
-        perror("Failed to unregister the disconnected client from epoll!");
-    close(args->socketfd);
+    if(args->socketfd)
+    {
+        if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
+            perror("Failed to unregister the disconnected client from epoll!");
+        close(args->socketfd);
+        
+        printf("Closing transfer connection (%s) with \"%s\" \n", 
+                (args->operation == SENDING_OP)? "SEND":"RECV", args->target_name);
+    }
+    
 
     //Free or unmap transfer buffers, and close files
     if(args->operation == SENDING_OP)
@@ -83,8 +90,8 @@ void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
     char *filename_start;
 
     memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,target=%s", 
-            args->target_file, &args->filesize, args->target_name);
+    sscanf(buffer, "!sendfile=%[^,],target=%s", 
+            args->target_file, args->target_name);
 
     //Extract the filename from the target file path
     filename_start = strrchr(args->target_file, '/');
@@ -224,7 +231,7 @@ int recver_accepted_file(char* buffer)
 
     //Register the new connection with epoll and set it as nonblocking
     fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
-    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLOUT);
+    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLOUT | EPOLLRDHUP);
 
     return args->socketfd;
 }
@@ -236,9 +243,8 @@ int file_send_next(FileXferArgs *args)
     int bytes;
      
     //Send the next chunk to the client
-    //bytes = send(args->socketfd, &args->file_buffer[args->transferred], remaining_size, 0);
-    bytes = send_msg_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
-    //printf("Sending chunk (%d): %.*s\n", bytes, bytes, &args->file_buffer[args->transferred]);
+    //bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], remaining_size);
+    bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
 
     if(bytes <= 0)
     {
@@ -254,8 +260,12 @@ int file_send_next(FileXferArgs *args)
     if(args->transferred < args->filesize)
         return bytes;
 
-    cancel_transfer(args);
-    return 0;
+    //Leave the sending transfer connection idle, and wait for the server to close it (recver has received all pending byes)
+    printf("Completed file transfer! Waiting for server to close the transfer connection...\n");
+    update_epoll_events(epoll_fd, args->socketfd, EPOLLRDHUP);
+    //cancel_transfer(args);
+
+    return bytes;
 }
 
 
@@ -388,7 +398,7 @@ int new_recv_cmd(FileXferArgs *args)
 
     //Register the new connection with epoll and set it as nonblocking
     fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
-    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLIN);
+    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLIN | EPOLLRDHUP);
 
     return args->socketfd;
 }
@@ -424,7 +434,6 @@ int file_recv_next(FileXferArgs *args)
         return bytes;
     printf("Completed file transfer!\n");
     
-
     //Verify file integrity, and then cleanup and close the transfer connection
     verify_received_file(args);
     return bytes;

@@ -22,9 +22,8 @@
 
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
-#define BUFSIZE                 640                                 //Maxium size of single message, with headers included
-#define EXTRA_CHARS             128                                 //Maximum amount of extra characters used by headers
-#define MAX_MSG_LENG            (BUFSIZE - EXTRA_CHARS)             //Maximum size of messages can be entered by the user
+#define BUFSIZE                 4096                                //Buffer size used to hold a single received message or piece of data
+#define MAX_MSG_LENG            512                                 //Maximum size of messages can be entered by the user
 
 #define LONG_RECV_PAGE_SIZE     32                                  //For testing long send/recv
 

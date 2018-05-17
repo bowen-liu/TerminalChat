@@ -1,37 +1,38 @@
 CC=gcc
+CFLAGS= -g
 
 all : clean common.o server.o client.o main
 
 #Common/Libraries
 crc32.o:
-	$(CC) -c library/crc32/crc32.c
+	$(CC) $(CFLAGS) -c library/crc32/crc32.c
 
 common.o: crc32.o
-	$(CC) -c common/common.c
+	$(CC) $(CFLAGS) -c common/common.c
 
 
 #Server
 group.o: common.o
-	$(CC) -c server/group.c
+	$(CC) $(CFLAGS) -c server/group.c
 
 file_transfer_server.o: common.o
-	$(CC) -c server/file_transfer_server.c
+	$(CC) $(CFLAGS) -c server/file_transfer_server.c
 
 server.o: group.o file_transfer_server.o
-	$(CC) -c server/server.c 
+	$(CC) $(CFLAGS) -c server/server.c 
 
 
 #Client
 file_transfer_client.o: common.o
-	$(CC) -c client/file_transfer_client.c
+	$(CC) $(CFLAGS) -c client/file_transfer_client.c
 
 client.o: file_transfer_client.o
-	$(CC) -c client/client.c
+	$(CC) $(CFLAGS) -c client/client.c
 
 
 #Main
 main: server.o client.o
-	$(CC) -o a.out main.c *.o
+	$(CC) $(CFLAGS) -o a.out main.c *.o
 	rm -f *.o
 
 clean:

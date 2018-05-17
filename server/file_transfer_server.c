@@ -127,6 +127,43 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
 }
 
 
+void cleanup_transfer_connection(Client *c)
+{
+    FileXferArgs_Server *xferargs = c->file_transfers;
+    FileXferArgs_Server *target_xferargs;
+
+    User *myself;
+    Client *target_xfer_connection;
+
+    //Check if the transfer connection has been terminated already (usually when the user quits while transferring files)
+    if(!xferargs)
+    {
+        kill_connection(c->socketfd);
+        return;
+    }
+
+    printf("Closing transfer connection (%s) for \"%s\"...\n", 
+            (xferargs->operation == SENDING_OP)? "SEND":"RECV", xferargs->myself->username);
+    
+    xferargs->myself->c->file_transfers = NULL;                 //Also remove the transfer args at my main connection          
+    target_xferargs = xferargs->target->c->file_transfers;
+
+    kill_connection(c->socketfd);
+    free(xferargs);
+    c->file_transfers = NULL;
+
+    //Close the target's transfer connection if it's still open
+    if(target_xferargs && fcntl(target_xferargs->xfer_socketfd, F_GETFD) != -1)
+    {
+        HASH_FIND_INT(active_connections, &target_xferargs->xfer_socketfd, target_xfer_connection);
+
+        if(target_xfer_connection)
+            cleanup_transfer_connection(target_xfer_connection);
+        else
+            printf("Did not find target transfer connection!\n");
+    }
+}
+
 
 /******************************************/
 /* New Incoming File Transfer Connections */
@@ -318,12 +355,8 @@ int client_data_forward(char *buffer, size_t bytes)
     
     bytes_sent = send_msg_direct(recver_xfer_socketfd, buffer, bytes);
 
-    //Close the sender's connection if the entire file has been forwarded
     if(current_client->file_transfers->transferred == current_client->file_transfers->filesize)
-    {
-        printf("All bytes for file transfer has been forwarded.\n");
-        disconnect_client(current_client);
-    }
+        printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", current_client->file_transfers->target->username);
 
     return bytes_sent;
 }

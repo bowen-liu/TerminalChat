@@ -45,6 +45,7 @@ typedef struct {
 
 
 User* get_current_client_user();
+void kill_connection(int socketfd);
 void disconnect_client(Client *c);
 
 #endif

@@ -17,7 +17,7 @@
 //Defined in library/crc32/crc32.c
 extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);
 
-void cleanup_transfer_args(FileXferArgs *args)
+void cancel_transfer(FileXferArgs *args)
 {
     //Close network connections
     if(args->socketfd)
@@ -41,11 +41,6 @@ void cleanup_transfer_args(FileXferArgs *args)
     //Free the args object
     free(args);
     file_transfers = NULL;
-}
-
-void cancel_transfer(FileXferArgs *args)
-{
-    cleanup_transfer_args(args);
 }
 
 
@@ -154,7 +149,6 @@ int new_send_cmd(FileXferArgs *args)
 }
 
 
-/*WARNING: args is not a completed FileXferArgs. It's merely the response received from the accept message*/
 int recver_accepted_file(char* buffer)
 {
     char accepted_filename[FILENAME_MAX+1];
@@ -163,7 +157,6 @@ int recver_accepted_file(char* buffer)
     char accepted_target_name[USERNAME_LENG+1];
     char accepted_token[TRANSFER_TOKEN_SIZE+1];
 
-    FileXferArgs *args = file_transfers;
     int matches = 0;
 
     sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
@@ -196,9 +189,9 @@ int recver_accepted_file(char* buffer)
     /* Open new connection to server for file transferring */
     /*******************************************************/
 
-    if(!new_transfer_connection(args))
+    if(!new_transfer_connection(file_transfers))
     {
-        cancel_transfer(args);
+        cancel_transfer(file_transfers);
         return 0;
     }
 
@@ -206,34 +199,34 @@ int recver_accepted_file(char* buffer)
     sprintf(buffer, "!xfersend=%s,size=%zu,crc=%x,sender=%s,recver=%s,token=%s", 
             file_transfers->filename, file_transfers->filesize, file_transfers->checksum, my_username, file_transfers->target_name, file_transfers->token);
     
-    if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
+    if(!send_msg_client(file_transfers->socketfd, buffer, strlen(buffer)+1))
     {
         perror("Failed to send transfer registration.");
-        cancel_transfer(args);
+        cancel_transfer(file_transfers);
         return 0;
     }
 
     //Obtain a response from the server
-    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    if(!recv_msg_client(file_transfers->socketfd, buffer, BUFSIZE))
     {
-        cancel_transfer(args);
+        cancel_transfer(file_transfers);
         return 0;
     }
 
     if(strcmp(buffer, "Accepted") != 0)
     {
         printf("Server did not accept transfer connection: \"%s\"\n", buffer);
-        cancel_transfer(args);
+        cancel_transfer(file_transfers);
         return 0;
     }
         
     printf("Sender has successfully established to the server!\n");
 
     //Register the new connection with epoll and set it as nonblocking
-    fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
-    register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLOUT | EPOLLRDHUP);
+    fcntl(file_transfers->socketfd, F_SETFL, O_NONBLOCK);
+    register_fd_with_epoll(epoll_fd, file_transfers->socketfd, EPOLLOUT | EPOLLRDHUP);
 
-    return args->socketfd;
+    return file_transfers->socketfd;
 }
 
 
@@ -432,6 +425,7 @@ int file_recv_next(FileXferArgs *args)
     //Has the entire message been received?
     if(args->transferred < args->filesize)
         return bytes;
+        
     printf("Completed file transfer!\n");
     
     //Verify file integrity, and then cleanup and close the transfer connection

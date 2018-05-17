@@ -36,56 +36,83 @@ User* get_current_client_user()
     return user;
 }
 
-void disconnect_client(Client *c)
+void kill_connection(int socketfd)
+{
+    if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, socketfd, NULL) < 0) 
+        perror("Failed to unregister the disconnected client from epoll!");
+
+    close(socketfd);
+}
+
+static inline void cleanup_unregistered_connection(Client *c)
+{
+    printf("Dropping unregistered connection...\n");
+    kill_connection(c->socketfd);
+}
+
+
+static inline void cleanup_user_connection(Client *c)
 {
     char disconnect_msg[BUFSIZE];
     User *user;
+    Client *xfer_connection;
+
+    printf("Disconnecting \"%s\"...\n", c->username);
     
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, c->socketfd, NULL) < 0) 
-        perror("Failed to unregister the disconnected client from epoll!");
-
-    close(c->socketfd);
-
-    //Check if the connection is for a registered client
-    if(current_client->connection_type == UNREGISTERED_CONNECTION)
+    //If the disconnecting user has an ongoing transfer connection, kill it first.
+    if(c->file_transfers)
     {
-        printf("Dropping unregistered connection...\n");
-        HASH_DEL(active_connections, c);
-        free(c);
+        printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
 
-        return;
+        HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
+        if(!xfer_connection)
+        {
+            printf("Could not locate associated transfer connection with disconnecting client!\n");
+            return;
+        } 
+
+        cleanup_transfer_connection(xfer_connection);
+        c->file_transfers = NULL;
     }
 
-    //Check if the connection is for a file transfer
-    else if(current_client->connection_type == TRANSFER_CONNECTION)
-    {
-        printf("Closing transfer connection (%s) for \"%s\"...\n", 
-                (current_client->file_transfers->operation == SENDING_OP)? "SEND":"RECV", current_client->file_transfers->myself->username);
-        free(current_client->file_transfers);
-        HASH_DEL(active_connections, c);
-        free(c);
-        return;
-    }
-    
-
+    //Close the main user's connection
+    kill_connection(c->socketfd);
+    printf("Closed user connection for \"%s\"\n", c->username);
+        
     //Leave participating chat groups
     disconnect_client_group_cleanup(c);
         
     //Free up resources used by the user
     sprintf(disconnect_msg, "!useroffline=%s", c->username);
-    printf("Disconnecting \"%s\"\n", c->username);
     send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);
 
-    user = get_current_client_user();
+    HASH_FIND_STR(active_users, c->username, user);
     HASH_DEL(active_users, user);
     free(user);
     
-    HASH_DEL(active_connections, c);
-    free(c);
-
     --total_users;
 }
 
+
+void disconnect_client(Client *c)
+{    
+    //Check if the connection is for a registered client
+    if(c->connection_type == UNREGISTERED_CONNECTION)
+        cleanup_unregistered_connection(c);
+        
+    //Check if the connection is for a file transfer
+    else if(current_client->connection_type == TRANSFER_CONNECTION)
+        cleanup_transfer_connection(c);
+
+    /*The connection is for a regular user*/
+    else
+        cleanup_user_connection(c); 
+    
+
+    //Free objects used by this connection
+    HASH_DEL(active_connections, c);
+    free(c);
+}
 
 
 
@@ -94,6 +121,21 @@ void disconnect_client(Client *c)
 /******************************/
 
 //TODO: Handle partial sends
+/*unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
+{
+    int sent, sent_total = 0;
+
+    while(sent_total < size)
+    {
+        sent = send(socketfd, buffer, size, 0);
+
+        if(!sent)
+            return sent;  
+        sent_total += sent;
+    }
+    return sent_total;
+}*/
+
 unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
 {
     return send(socketfd, buffer, size, 0);
@@ -226,6 +268,7 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
     if(bytes < 0)
     {
         perror("Failed to receive from client. Disconnecting...");
+        printf("Client: %s\n", c->username);
         disconnect_client(c);
         return 0;
     }
@@ -243,9 +286,10 @@ static unsigned int recv_msg(Client *c, char* buffer, size_t size)
 
 
 
-/**************************************/
-/* Client New Connection Registration */
-/**************************************/
+/******************************/
+/*      Client Operations     */
+/******************************/
+
 
 static inline int register_client_connection()
 {
@@ -331,10 +375,6 @@ static inline int register_client_connection()
     return 1;
 }
 
-
-/******************************/
-/*      Client Operations     */
-/******************************/
 
 static inline int client_pm()
 {
@@ -479,10 +519,43 @@ static inline int parse_client_command()
 }
 
 
+
 /******************************/
-/*    Serverside Operations   */
+/*    Core Server Operations  */
 /******************************/
 
+static inline int handle_new_connection()
+{    
+    Client *new_client = calloc(1, sizeof(Client));
+    current_client = new_client;
+    
+    new_client->username[0] = '\0';                             //Empty username indicates an unregistered connection
+    new_client->connection_type = UNREGISTERED_CONNECTION;
+    new_client->sockaddr_leng = sizeof(struct sockaddr_in);
+    new_client->socketfd = accept(server_socketfd, (struct sockaddr*) &new_client->sockaddr, &new_client->sockaddr_leng);
+
+    if(new_client->socketfd < 0)
+    {
+        perror("Error accepting client!");
+        free(new_client);
+        return 0;
+    }
+    printf("Accepted new connection %s:%d (fd=%d)\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port), new_client->socketfd);
+
+    //Add the client into active_connections, and use its socketfd as the key.
+    HASH_ADD_INT(active_connections, socketfd, new_client);
+
+    //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
+    fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
+    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
+        return 0;    
+
+    //Send a greeting to the client
+    if(!send_msg(new_client, "Hello World!", 13))
+        return 0;
+    
+    return 1;
+} 
 
 static inline int handle_client_msg()
 {
@@ -522,40 +595,6 @@ static inline int handle_client_msg()
 }
 
 
-static inline int handle_new_connection()
-{    
-    Client *new_client = calloc(1, sizeof(Client));
-    current_client = new_client;
-    
-    new_client->username[0] = '\0';                             //Empty username indicates an unregistered connection
-    new_client->connection_type = UNREGISTERED_CONNECTION;
-    new_client->sockaddr_leng = sizeof(struct sockaddr_in);
-    new_client->socketfd = accept(server_socketfd, (struct sockaddr*) &new_client->sockaddr, &new_client->sockaddr_leng);
-
-    if(new_client->socketfd < 0)
-    {
-        perror("Error accepting client!");
-        free(new_client);
-        return 0;
-    }
-    printf("Accepted new connection %s:%d (fd=%d)\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port), new_client->socketfd);
-
-    //Add the client into active_connections, and use its socketfd as the key.
-    HASH_ADD_INT(active_connections, socketfd, new_client);
-
-    //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
-    fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
-        return 0;    
-
-    //Send a greeting to the client
-    if(!send_msg(new_client, "Hello World!", 13))
-        return 0;
-    
-    return 1;
-} 
-
-
 static inline int handle_stdin()
 {
     int bytes; 
@@ -573,13 +612,6 @@ static inline int handle_stdin()
     return bytes;
 }
 
-
-
-
-
-/******************************/
-/*     Server Entry Point     */
-/******************************/
 
 static inline void server_main_loop()
 {
@@ -611,10 +643,18 @@ static inline void server_main_loop()
             else
             {                
                 HASH_FIND_INT(active_connections, &events[i].data.fd, current_client);
+                if(!current_client)
+                {
+                    printf("Connection (fd=%d) is no longer active.\n", events[i].data.fd);
+                    continue;
+                }
 
                 //Handle EPOLLRDHUP: the client has closed its connection
                 if(events[i].events & EPOLLRDHUP)
+                {
                     disconnect_client(current_client);
+                    continue;
+                }    
                 
                 //Handles EPOLLIN (ready for reading)
                 else if(events[i].events & EPOLLIN)

@@ -29,6 +29,7 @@ static unsigned int users_online = 0;
 FileXferArgs *file_transfers;
 
 
+
 /******************************/
 /*     Basic Send/Receive     */
 /******************************/
@@ -87,6 +88,9 @@ static inline unsigned int recv_msg(char* buffer, size_t size)
 {
     return recv_msg_client(my_socketfd, buffer, size);
 }
+
+
+
 
 /******************************/
 /*     Long Send/Receive     */
@@ -263,6 +267,7 @@ static int handle_user_command()
 
     return 1;
 }
+
 
 
 /******************************/
@@ -506,10 +511,6 @@ static void parse_control_message(char* cmd_buffer)
         begin_file_sending();
 
 
-
-    
-
-
     else
         printf("Received invalid control message \"%s\"\n", buffer);
 
@@ -517,8 +518,9 @@ static void parse_control_message(char* cmd_buffer)
 }
 
 
+
 /******************************/
-/*     Client Entry Point     */
+/*   Core Client Operations   */
 /******************************/
 
 static inline void client_main_loop()
@@ -530,7 +532,6 @@ static inline void client_main_loop()
      //Send messages to the host forever
     while(1)
     {
-        
         //Wait until epoll has detected some event in the registered fd's
         ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
         if(ready_count < 0)
@@ -605,11 +606,10 @@ static inline void client_main_loop()
                                 file_transfers->transferred, file_transfers->filesize, file_transfers->target_name);
 
                     cancel_transfer(file_transfers);
-                }
-                    
+                }   
 
                 //The transfer connection is ready for receiving
-                if(events[i].events & EPOLLIN)
+                else if(events[i].events & EPOLLIN)
                     file_recv_next(file_transfers);
                 
                 //The transfer connection is ready for sending

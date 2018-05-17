@@ -23,6 +23,8 @@ typedef struct filexferargs_server {
 } FileXferArgs_Server;
 
 
+void cleanup_transfer_connection(Client *c);
+
 int register_recv_transfer_connection();
 int register_send_transfer_connection();
 

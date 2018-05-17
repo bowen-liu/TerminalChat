@@ -8,7 +8,8 @@
 #include <unistd.h>
 
 
-#define RECV_CHUNK_SIZE     BUFSIZE
+//#define RECV_CHUNK_SIZE     BUFSIZE
+#define RECV_CHUNK_SIZE     64
 #define CLIENT_RECV_FOLDER "files_received"
 
 
@@ -31,14 +32,15 @@ typedef struct {
 } FileXferArgs;     //Also see FileXferArgs_Server
 
 
-
 void cancel_transfer(FileXferArgs *args);
+
 
 /*Sending*/
 void parse_send_cmd_sender(char *buffer, FileXferArgs *args);
 int new_send_cmd(FileXferArgs *args);
 int recver_accepted_file(char* buffer);
 int file_send_next(FileXferArgs *args);
+
 
 /*Receiving*/
 void parse_send_cmd_recver(char *buffer, FileXferArgs *args);

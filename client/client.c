@@ -247,10 +247,23 @@ static int outgoing_file()
     return 1;
 }
 
+static int cancel_file_transfer()
+{
+    if(!file_transfers)
+    {
+        printf("No file transfers are in progress.\n");
+        return 0;
+    }
+
+    cancel_transfer(file_transfers);
+    return 0;
+}
+
 
 static int handle_user_command()
 {
-    //Todo: escape commands like "!register"
+    //Return 0 if you don't want the command to be forwarded
+
     if(strcmp(buffer, "!close") == 0)
     {
         printf("Closing connection!\n");
@@ -262,6 +275,9 @@ static int handle_user_command()
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
         return outgoing_file();
+
+    else if(strncmp("!cancelfile", buffer, 11) == 0)
+        return cancel_file_transfer();
         
 
 

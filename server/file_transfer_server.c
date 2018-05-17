@@ -6,7 +6,7 @@
 #include <time.h>
 
 /******************************/
-/*          Helpers           */
+/*     Helpers and Shared     */
 /******************************/ 
 
 //Defined in library/crc32/crc32.c
@@ -127,6 +127,11 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
 }
 
 
+
+/******************************/
+/*        Disconnection       */
+/******************************/ 
+
 void cleanup_transfer_connection(Client *c)
 {
     FileXferArgs_Server *xferargs = c->file_transfers;
@@ -162,6 +167,41 @@ void cleanup_transfer_connection(Client *c)
         else
             printf("Did not find target transfer connection!\n");
     }
+}
+
+int close_associated_xfer_connection(Client *c)
+{
+    Client *xfer_connection;
+
+    if(!c->file_transfers)
+        return 0;
+
+    printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
+
+    HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
+    if(!xfer_connection)
+    {
+        printf("Could not locate associated transfer connection with disconnecting client!\n");
+        return 0;
+    } 
+
+    cleanup_transfer_connection(xfer_connection);
+    c->file_transfers = NULL;
+
+    return 1;
+}
+
+int user_cancelled_transfer()
+{
+    //Check if the connection has already been closed (or is valid)
+    if(!current_client->file_transfers)
+        return 0;
+    
+    sprintf(buffer, "File transfer has been cancelled by \"%s\"", current_client->username);
+    send_msg(current_client->file_transfers->target->c, buffer, strlen(buffer)+1);
+    close_associated_xfer_connection(current_client);
+
+    return 1;
 }
 
 

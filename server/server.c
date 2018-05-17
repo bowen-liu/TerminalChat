@@ -55,25 +55,11 @@ static inline void cleanup_user_connection(Client *c)
 {
     char disconnect_msg[BUFSIZE];
     User *user;
-    Client *xfer_connection;
 
     printf("Disconnecting \"%s\"...\n", c->username);
     
     //If the disconnecting user has an ongoing transfer connection, kill it first.
-    if(c->file_transfers)
-    {
-        printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
-
-        HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
-        if(!xfer_connection)
-        {
-            printf("Could not locate associated transfer connection with disconnecting client!\n");
-            return;
-        } 
-
-        cleanup_transfer_connection(xfer_connection);
-        c->file_transfers = NULL;
-    }
+    close_associated_xfer_connection(c);
 
     //Close the main user's connection
     kill_connection(c->socketfd);
@@ -506,6 +492,8 @@ static inline int parse_client_command()
     else if(strncmp(buffer, "!acceptfile=", 12) == 0)
         return accepted_file_transfer();
 
+    else if(strncmp(buffer, "!cancelfile", 11) == 0)
+        return user_cancelled_transfer();
 
     
     else

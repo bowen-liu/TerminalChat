@@ -654,6 +654,7 @@ static void handle_timer_events()
                 printf("Event from user %s. Count=%lu\n", current_timer_event->c->username, timer_retval);
             
             //TODO: Notify sender of expiry
+            transfer_invite_expired(current_timer_event->c);
 
             //Cleanup and delete this event once it has occured
             cleanup_timer_event(current_timer_event);

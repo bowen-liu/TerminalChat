@@ -270,10 +270,11 @@ int file_send_next(FileXferArgs *args)
 /******************************/ 
 
 //Used by the receiver and server to parse its command into a FileXferArgs struct
-void parse_send_cmd_recver(char *buffer, FileXferArgs *args)
+void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
 {
-    memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", args->filename, &args->filesize, &args->checksum, args->target_name, args->token);
+    memset(fileinfo, 0 ,sizeof(FileInfo));
+    sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            fileinfo->filename, &fileinfo->filesize, &fileinfo->checksum, fileinfo->target_name, fileinfo->token);
 
     //You must now fill args->socketfd yourself after calling this function, if you choose to accept the file afterwards
 }

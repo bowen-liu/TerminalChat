@@ -28,6 +28,7 @@ typedef struct filexferargs_server {
 void cleanup_transfer_connection(Client *c);
 int close_associated_xfer_connection(Client *c);
 int user_cancelled_transfer();
+int transfer_invite_expired(Client *c);
 
 int register_recv_transfer_connection();
 int register_send_transfer_connection();

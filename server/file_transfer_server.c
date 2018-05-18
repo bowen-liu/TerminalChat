@@ -72,7 +72,6 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
         if(!matches)
         {
             printf("No matching request found with requester \"%s\".\n", request_username);
-            print_server_xferargs(xferargs);
             return 0;
         }
     }
@@ -194,15 +193,50 @@ int close_associated_xfer_connection(Client *c)
 
 int user_cancelled_transfer()
 {
-    //Check if the connection has already been closed (or is valid)
-    if(!current_client->file_transfers)
-        return 0;
     
-    sprintf(buffer, "File transfer has been cancelled by \"%s\"", current_client->username);
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+    
+    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
+    printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+
+    if(!current_client->file_transfers)
+    {
+        printf("User has no pending or ongoing file transfer.\n");
+        return 0;
+    }
+
+    //Notify the target 
+    sprintf(buffer, "!cancelfile=%s,reason=%s", current_client->username, reason);
     send_msg(current_client->file_transfers->target->c, buffer, strlen(buffer)+1);
-    close_associated_xfer_connection(current_client);
+        
+    if(current_client->file_transfers->timeout)
+    {
+        cleanup_timer_event(current_client->file_transfers->timeout);
+        free(current_client->file_transfers);
+        current_client->file_transfers = NULL;
+    }
+    else
+        close_associated_xfer_connection(current_client);
 
     return 1;
+}
+
+int transfer_invite_expired(Client *c)
+{
+    if(!c->file_transfers)
+        return 0;
+    
+    //Notify the sender of file expiry
+    sprintf(buffer, "!rejectfile=%s,reason=%s", c->file_transfers->target->username, "Expired");
+    send_msg(c, buffer, strlen(buffer)+1);
+
+    //Notify the receiver of file expiry
+    sprintf(buffer, "!cancelfile=%s,reason=%s", c->username, "Expired");
+    send_msg(c->file_transfers->target->c, buffer, strlen(buffer)+1);
+
+    free(c->file_transfers);
+    c->file_transfers = NULL;
 }
 
 
@@ -236,7 +270,6 @@ int register_send_transfer_connection()
         printf("Mismatching SENDING transfer connection.\n");
         send_msg(current_client, "WrongInfo", 10);
         disconnect_client(current_client);
-        free(myself->c->file_transfers);
         return 0;
     }
 
@@ -283,7 +316,6 @@ int register_recv_transfer_connection()
         printf("Mismatching RECEIVING transfer connection.\n");
         send_msg(current_client, "WrongInfo", 10);
         disconnect_client(current_client);
-        free(myself->c->file_transfers);
         return 0;
     }
 

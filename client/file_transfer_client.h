@@ -32,6 +32,19 @@ typedef struct {
 } FileXferArgs;     //Also see FileXferArgs_Server
 
 
+typedef struct fileinfo{
+
+    char target_name[USERNAME_LENG+1];
+    char filename[MAX_FILENAME+1];
+    size_t filesize;
+    unsigned int checksum;
+    char token[TRANSFER_TOKEN_SIZE+1];
+
+    struct fileinfo *next;
+
+} FileInfo;
+
+
 void cancel_transfer(FileXferArgs *args);
 
 
@@ -43,7 +56,7 @@ int file_send_next(FileXferArgs *args);
 
 
 /*Receiving*/
-void parse_send_cmd_recver(char *buffer, FileXferArgs *args);
+void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo);
 void parse_accept_cmd(char *buffer, FileXferArgs *args);
 int new_recv_cmd(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args);

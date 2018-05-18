@@ -26,7 +26,8 @@ static Member *online_members = NULL;
 static unsigned int users_online = 0;
 
 //Pending File Transfers
-FileXferArgs *file_transfers;
+FileInfo *incoming_transfers;                           //Outstanding incoming transfers that I can accept
+FileXferArgs *file_transfers;                           //The current file transfer that's in progress
 
 
 
@@ -247,9 +248,52 @@ static int outgoing_file()
     return 1;
 }
 
+static int accept_incoming_file()
+{
+    char target_name[USERNAME_LENG+1];
+    FileInfo *curr, *temp; 
+
+    sscanf(buffer, "!acceptfile=%s",target_name);
+
+    //Find the file associated with the sender
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, target_name) == 0)
+            break;
+        else
+            curr = NULL;
+    }
+
+    if(!curr)
+    {
+        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        return 0;
+    }
+
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+    strcpy(file_transfers->target_name, target_name);
+    strcpy(file_transfers->filename, curr->filename);
+    strcpy(file_transfers->token, curr->token);
+    file_transfers->filesize = curr->filesize;
+    file_transfers->checksum = curr->checksum;
+
+    LL_DELETE(incoming_transfers, curr);
+    free(curr);
+
+    return new_recv_cmd(file_transfers);
+}
 
 
-static int cancel_file_transfer()
+static int reject_incoming_file()
+{
+    /*char reject_msg[BUFSIZE + MAX_FILENAME]; 
+
+    sprintf(reject_msg, "!rejectfile=%s,from=%s", args->filename, args->target_name);
+    return send_msg(reject_msg, strlen(reject_msg)+1);*/
+    return 0;
+}
+
+static int cancel_ongoing_file_transfer()
 {
     if(!file_transfers)
     {
@@ -257,8 +301,11 @@ static int cancel_file_transfer()
         return 0;
     }
 
+    printf("Ongoing transfer has been cancelled.\n");
+    sprintf(buffer,"!cancelfile=%s,reason=%s", file_transfers->target_name, "UserCancelled");
     cancel_transfer(file_transfers);
-    return 0;
+    
+    return 1;
 }
 
 
@@ -277,9 +324,15 @@ static int handle_user_command()
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
         return outgoing_file();
+    
+    else if(strncmp("!acceptfile=", buffer, 12) == 0)
+        return accept_incoming_file();
+
+    else if(strncmp("!rejectfile=", buffer, 12) == 0)
+        return reject_incoming_file();
 
     else if(strncmp("!cancelfile", buffer, 11) == 0)
-        return cancel_file_transfer();
+        return cancel_ongoing_file_transfer();
         
 
 
@@ -447,43 +500,84 @@ static void parse_userlist()
 
 /*File Transfer*/
 
-static int reject_incoming_file_direct(FileXferArgs *args)
-{
-    char reject_msg[BUFSIZE + MAX_FILENAME]; 
-
-    sprintf(reject_msg, "!rejectfile=%s,from=%s", args->filename, args->target_name);
-    return send_msg(reject_msg, strlen(reject_msg)+1);
-}
-
 static int incoming_file()
 {
-    FileXferArgs temp_args;
+    FileInfo *fileinfo = calloc(1,sizeof(FileInfo));
+    FileInfo *curr, *temp;
 
-    if(file_transfers)
+    parse_send_cmd_recver(buffer, fileinfo);
+    printf("User \"%s\" would like to send you the file \"%s\" (%zu bytes, crc: %x, token: %s)\n", 
+            fileinfo->target_name, fileinfo->filename, fileinfo->filesize,fileinfo->checksum, fileinfo->token);
+
+    //If the same user has offered any other files previously, delete it
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
     {
-        parse_send_cmd_recver(buffer, &temp_args);
-        printf("Cannot receive new incoming file. A pending file transfer is already in progress...\n");
-        reject_incoming_file_direct(&temp_args);
-        return 0;
+        if(strcmp(curr->target_name, fileinfo->target_name) == 0)
+        {
+            LL_DELETE(incoming_transfers, curr);
+            free(curr);
+        }
     }
 
-    file_transfers = calloc(1,sizeof(FileXferArgs));
+    LL_APPEND(incoming_transfers, fileinfo);
+    return 1;
+}
 
-    //TODO: Allow user to choose whether to accept or reject the incoming file at this point
-    parse_send_cmd_recver(buffer, file_transfers);
-    printf("Accepted file transfer with user \"%s\" for file \"%s\" (%zu bytes, token: %s)\n", 
-            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->token);
 
-    if(!new_recv_cmd(file_transfers))
+static int rejected_file_sending()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+
+    if(!file_transfers)
         return 0;
+    
+    sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
+    printf("File Transfer with \"%s\" has been declined. Reason: \"%s\"\n", target_name, reason);
+    cancel_transfer(file_transfers);
 
     return 1;
 }
+
+static void file_transfer_cancelled()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+    FileInfo *curr, *temp;
+
+    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
+
+    if(file_transfers && strcmp(file_transfers->target_name, target_name) == 0)
+    {
+        printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+        cancel_transfer(file_transfers);
+        return;
+    }
+    
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, target_name) == 0)
+        {
+            LL_DELETE(incoming_transfers, curr);
+            free(curr);
+            break;
+        }
+        else
+            curr = NULL;
+    }
+
+    if(curr)
+        printf("File Transfer invitation with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+    else
+        printf("No file transfers with \"%s\" exists to be cancelled. \n", target_name);
+}
+
 
 static int begin_file_sending()
 {
     return recver_accepted_file(buffer);
 }
+
 
 
 static void parse_control_message(char* cmd_buffer)
@@ -527,6 +621,12 @@ static void parse_control_message(char* cmd_buffer)
 
     else if(strncmp("!acceptfile=", buffer, 12) == 0)
         begin_file_sending();
+
+    else if(strncmp("!rejectfile=", buffer, 12) == 0)
+        rejected_file_sending();
+    
+    else if(strncmp("!cancelfile=", buffer, 12) == 0)
+        return file_transfer_cancelled();
 
 
     else

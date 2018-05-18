@@ -34,7 +34,7 @@
 #define MAX_FILE_PATH           512 + MAX_FILENAME
 #define TRANSFER_TOKEN_SIZE     16
 #define CRC_INIT                0xffffffff
-#define XFER_REQUEST_TIMEOUT    5                                  //seconds
+#define XFER_REQUEST_TIMEOUT    30                                  //seconds
 
 
 enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};

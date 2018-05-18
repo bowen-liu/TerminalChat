@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <time.h>
+#include <sys/timerfd.h>
 
 /******************************/
 /*     Helpers and Shared     */
@@ -315,6 +316,8 @@ int new_client_transfer()
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
 
+    struct itimerspec timer_value;
+
     sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
@@ -340,7 +343,36 @@ int new_client_transfer()
     printf("Forwarding file transfer request from user \"%s\" to  user \"%s\", for file \"%s\" (%zu bytes, token: %s, checksum: %x)\n", 
             current_client->username, xferargs->target->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum);
 
-    return send_msg(xferargs->target->c, buffer, strlen(buffer)+1);
+    send_msg(xferargs->target->c, buffer, strlen(buffer)+1);
+    send_msg(current_client, "Delivered", 10);
+
+    //Set a timeout event for the request
+    xferargs->timeout = calloc(1, sizeof(TimerEvent));
+    xferargs->timeout->event_type = EXPIRING_TRANSFER_REQ;
+    xferargs->timeout->c = current_client;
+
+    xferargs->timeout->timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if(xferargs->timeout->timerfd < 0)
+    {
+        perror("Failed to create a timerfd.");
+        return 0;
+    }
+
+    memset(&timer_value, 0, sizeof(struct itimerspec));
+    timer_value.it_value.tv_sec = XFER_REQUEST_TIMEOUT;
+
+    if(timerfd_settime(xferargs->timeout->timerfd, 0, &timer_value, NULL) < 0)
+    {
+        perror("Failed to arm event timer.");
+        return 0;
+    }
+
+    //Register the timer
+    HASH_ADD_INT(timers, timerfd, xferargs->timeout);
+    if(!register_fd_with_epoll(timers_epollfd, xferargs->timeout->timerfd, EPOLLIN | EPOLLONESHOT))
+        return 0;   
+
+    return 1;
 }
 
 int accepted_file_transfer()
@@ -367,6 +399,10 @@ int accepted_file_transfer()
 
     xferargs->target = target;
     current_client->file_transfers = xferargs;
+
+    //Cancel the timeout timer on the sender side
+    cleanup_timer_event(target->c->file_transfers->timeout);
+    target->c->file_transfers->timeout = NULL;
     
     //Forward the accept message to the sender
     sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 

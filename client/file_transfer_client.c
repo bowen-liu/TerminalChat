@@ -30,7 +30,6 @@ void cancel_transfer(FileXferArgs *args)
                 (args->operation == SENDING_OP)? "SEND":"RECV", args->target_name);
     }
     
-
     //Free or unmap transfer buffers, and close files
     if(args->operation == SENDING_OP)
         munmap((void*)args->file_buffer, args->filesize);

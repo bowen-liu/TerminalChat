@@ -20,6 +20,8 @@ typedef struct filexferargs_server {
     unsigned int checksum;
     char token[TRANSFER_TOKEN_SIZE+1];
 
+    TimerEvent *timeout;
+
 } FileXferArgs_Server;
 
 

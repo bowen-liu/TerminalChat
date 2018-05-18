@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdint.h>
 
 #include <unistd.h>
 #include <sys/types.h> 
@@ -33,10 +34,10 @@
 #define MAX_FILE_PATH           512 + MAX_FILENAME
 #define TRANSFER_TOKEN_SIZE     16
 #define CRC_INIT                0xffffffff
+#define XFER_REQUEST_TIMEOUT    5                                  //seconds
 
-enum sendrecv_op {NONE = 0, SENDING_OP, RECVING_OP};
 
-
+enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};
 
 
 typedef struct namelist {

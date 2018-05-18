@@ -247,6 +247,8 @@ static int outgoing_file()
     return 1;
 }
 
+
+
 static int cancel_file_transfer()
 {
     if(!file_transfers)

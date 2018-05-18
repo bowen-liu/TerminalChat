@@ -8,8 +8,8 @@
 #include <unistd.h>
 
 
-//#define RECV_CHUNK_SIZE     BUFSIZE
-#define RECV_CHUNK_SIZE     64
+#define RECV_CHUNK_SIZE     BUFSIZE
+//#define RECV_CHUNK_SIZE     64
 #define CLIENT_RECV_FOLDER "files_received"
 
 

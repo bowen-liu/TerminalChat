@@ -21,6 +21,9 @@ extern unsigned int total_users;
 
 extern Client *current_client;                      //Descriptor for the client being serviced right now
 
+extern TimerEvent *timers;
+extern int timers_epollfd;  
+
 
 /*Send/recv*/
 unsigned int send_msg_direct(int socketfd, char* buffer, size_t size);

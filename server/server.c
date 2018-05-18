@@ -1,4 +1,5 @@
 #include "server.h"
+#include <pthread.h>
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 
@@ -8,21 +9,30 @@
 int server_socketfd;
 struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
 
-//epoll FD for handling multiple clients 
-static int epoll_fd;  
+//epoll FD for handling multiple clients, and event timers
+static int connections_epollfd;  
 
 //Receive buffers
 char *buffer;
 size_t buffer_size = BUFSIZE;
 
+//Event Timers
+TimerEvent *timers = NULL; 
+int timers_epollfd;  
+pthread_mutex_t client_lock = PTHREAD_MUTEX_INITIALIZER;        //Locked when a thread is currently working on some client requests
+pthread_t timer_event_thread;
+
+
 //Keeping track of clients
 Client *active_connections = NULL;                  //Hashtable of all active client sockets (key = socketfd)
 User *active_users = NULL;                          //Hashtable of all active users (key = username), mapped to their client descriptors
-Group* groups = NULL;                               //Hashtable of all user created private chatrooms (key = groupname)
+Group *groups = NULL;                               //Hashtable of all user created private chatrooms (key = groupname)                      
 unsigned int total_users = 0;    
 
-//Client being served right now
+//Client/Event being served right now
 Client *current_client;                             //Descriptor for the client being serviced right now
+TimerEvent *current_timer_event;
+
 
 
 /******************************/
@@ -38,7 +48,7 @@ User* get_current_client_user()
 
 void kill_connection(int socketfd)
 {
-    if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, socketfd, NULL) < 0) 
+    if(epoll_ctl(connections_epollfd, EPOLL_CTL_DEL, socketfd, NULL) < 0) 
         perror("Failed to unregister the disconnected client from epoll!");
 
     close(socketfd);
@@ -98,6 +108,17 @@ void disconnect_client(Client *c)
     //Free objects used by this connection
     HASH_DEL(active_connections, c);
     free(c);
+}
+
+
+void cleanup_timer_event(TimerEvent *event)
+{
+    if(epoll_ctl(timers_epollfd, EPOLL_CTL_DEL, event->timerfd, NULL) < 0) 
+        perror("Failed to unregister expired timer from epoll!");
+    close(event->timerfd);
+
+    HASH_DEL(timers, event);
+    free(event);
 }
 
 
@@ -187,7 +208,7 @@ static void send_long_msg()
 
     //Start of a new long send. Register the client's FD to signal on EPOLLOUT
     if(current_client->pending_processed == 0)
-        update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
+        update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
      
     //Send the next chunk to the client
     bytes = send_msg_direct(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size);
@@ -215,7 +236,7 @@ static void send_long_msg()
     current_client->pending_processed = 0;
 
     //Remove the EPOLLOUT notification once long send has completed
-    update_epoll_events(epoll_fd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
+    update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
 }
 
 
@@ -517,7 +538,6 @@ static inline int handle_new_connection()
     Client *new_client = calloc(1, sizeof(Client));
     current_client = new_client;
     
-    new_client->username[0] = '\0';                             //Empty username indicates an unregistered connection
     new_client->connection_type = UNREGISTERED_CONNECTION;
     new_client->sockaddr_leng = sizeof(struct sockaddr_in);
     new_client->socketfd = accept(server_socketfd, (struct sockaddr*) &new_client->sockaddr, &new_client->sockaddr_leng);
@@ -535,7 +555,7 @@ static inline int handle_new_connection()
 
     //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
+    if(!register_fd_with_epoll(connections_epollfd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
         return 0;    
 
     //Send a greeting to the client
@@ -600,22 +620,76 @@ static inline int handle_stdin()
     return bytes;
 }
 
+static void handle_timer_events()
+{
+    struct epoll_event events[MAX_EPOLL_EVENTS];
+    int ready_count, i;
+    uint64_t timer_retval;
+    
+    while(1)
+    {
+        //Wait until epoll has detected some event in the registered timer event fd's
+        ready_count = epoll_wait(timers_epollfd, events, MAX_EPOLL_EVENTS, -1);
+        if(ready_count < 0)
+        {
+            perror("epoll_wait failed!");
+            return;
+        }
+        
+        //Got some timer events ready
+        pthread_mutex_lock(&client_lock);
+
+        for(i=0; i<ready_count; i++)
+        {
+            HASH_FIND_INT(timers, &events[i].data.fd, current_timer_event);
+            if(!current_timer_event)
+            {
+                printf("Event is no longer present.\n");
+                continue;
+            }
+
+            if(!read(current_timer_event->timerfd, &timer_retval, sizeof(uint64_t)))
+                perror("Failed to read timer event.");
+            else
+                printf("Event from user %s. Count=%lu\n", current_timer_event->c->username, timer_retval);
+            
+            //TODO: Notify sender of expiry
+
+            //Cleanup and delete this event once it has occured
+            cleanup_timer_event(current_timer_event);
+            current_timer_event = NULL;
+        }
+
+        pthread_mutex_unlock(&client_lock);
+    }
+}
+
 
 static inline void server_main_loop()
 {
     struct epoll_event events[MAX_EPOLL_EVENTS];
     int ready_count, i;
+
+    //Spawn a new thread that monitors timer events
+    if(pthread_create(&timer_event_thread, NULL, (void*) &handle_timer_events, NULL) != 0)
+    {
+        printf("Failed to create timer event thread\n");
+        return;
+    }
     
+    //Continuously handle network events
     while(1)
     {
-        //Wait until epoll has detected some event in the registered fd's
-        ready_count = epoll_wait(epoll_fd, events, MAX_EPOLL_EVENTS, -1);
+        //Wait until epoll has detected some event in the registered socket fd's
+        ready_count = epoll_wait(connections_epollfd, events, MAX_EPOLL_EVENTS, -1);
         if(ready_count < 0)
         {
             perror("epoll_wait failed!");
             return;
         }
 
+        //Got some network events ready
+        pthread_mutex_lock(&client_lock);
 
         for(i=0; i<ready_count; i++)
         {
@@ -654,9 +728,10 @@ static inline void server_main_loop()
                     if(current_client->pending_size > 0)
                         send_long_msg();
                 }
-            }
-                
+            }    
         }
+
+        pthread_mutex_unlock(&client_lock);
     }
 }
 
@@ -667,9 +742,11 @@ void server(const char* ipaddr, const int port)
     /*Initialize network buffer*/
     buffer = calloc(BUFSIZE, sizeof(char));
 
-    /*Setup epoll to allow multiplexed IO to serve multiple clients*/
-    epoll_fd = epoll_create1(0);
-    if(epoll_fd < 0)
+    /*Setup epoll to allow multiplexed IO to serve multiple clients, and to use timerfd's*/
+    connections_epollfd = epoll_create1(0);
+    timers_epollfd = epoll_create1(0);
+
+    if(connections_epollfd < 0 || timers_epollfd < 0)
     {
         perror("Failed to create epoll!");
         return;
@@ -699,11 +776,11 @@ void server(const char* ipaddr, const int port)
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
-    if(!register_fd_with_epoll(epoll_fd, server_socketfd, EPOLLIN))
+    if(!register_fd_with_epoll(connections_epollfd, server_socketfd, EPOLLIN))
             return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))
+    if(!register_fd_with_epoll(connections_epollfd, 0, EPOLLIN))
         return;   
 
     /*Begin listening for incoming connections on the server socket*/

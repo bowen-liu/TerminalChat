@@ -39,13 +39,25 @@ typedef struct {
 typedef struct {
     char username[USERNAME_LENG+1];
     Client *c;
+
     UT_hash_handle hh;
 } User;
 
+
+enum timer_event_type {NO_EVENT = 0, EXPIRING_TRANSFER_REQ};
+
+typedef struct {
+    int timerfd;
+    enum timer_event_type event_type;
+    Client *c;
+
+    UT_hash_handle hh;
+} TimerEvent;
 
 
 User* get_current_client_user();
 void kill_connection(int socketfd);
 void disconnect_client(Client *c);
+void cleanup_timer_event(TimerEvent *timer);
 
 #endif

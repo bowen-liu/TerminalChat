@@ -737,16 +737,17 @@ static inline void client_main_loop()
 
 
 
-void client(const char* ipaddr, const int port,  char *username)
+void client(const char* hostname, const unsigned int port,  char *username)
 {
     int retval;
+    char ipaddr[INET_ADDRSTRLEN], port_str[8];
 
     if(!name_is_valid(username))
         return;
     
     buffer = calloc(BUFSIZE, sizeof(char));
     my_username = username;
-    printf("Username: %s\n", username);
+    printf("Running as client with username: %s...\n", username);
 
 
     /*Setup epoll to allow multiplexed IO to serve multiple clients*/
@@ -756,6 +757,11 @@ void client(const char* ipaddr, const int port,  char *username)
         perror("Failed to create epoll!");
         return;
     }
+
+    //Resolve the server's hostname
+    sprintf(port_str, "%u", port);
+    if(!hostname_to_ip(hostname, port_str, ipaddr))
+        return;
 
     //Create a TCP socket 
     my_socketfd = socket(AF_INET, SOCK_STREAM, 0);
@@ -771,13 +777,16 @@ void client(const char* ipaddr, const int port,  char *username)
     server_addr.sin_port = htons(port);
     server_addr.sin_addr.s_addr = inet_addr(ipaddr);
 
-
     //Connect to the server
+    printf("Connection to server at %s:%u... \n", ipaddr, ntohs(server_addr.sin_port));
     if(connect(my_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
-        perror("Error connecting to the server!");
+        perror("Failed to connect to server.");
         return;
     }
+    printf("Connected!\n");
+
+   
 
     //Register with the server
     if(!register_with_server())

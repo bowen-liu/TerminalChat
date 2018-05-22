@@ -741,8 +741,10 @@ static inline void server_main_loop()
 
 
 
-void server(const char* ipaddr, const int port)
+void server(const char* hostname, const unsigned int port)
 {   
+    char ipaddr_used[INET_ADDRSTRLEN], port_str[8];
+
     /*Initialize network buffer*/
     buffer = calloc(BUFSIZE, sizeof(char));
 
@@ -764,19 +766,31 @@ void server(const char* ipaddr, const int port)
         return;
     }
 
-    /*Bind specified IP/Port to the socket*/
     memset(&server_addr, 0, sizeof(struct sockaddr_in));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(port);
-    //server_addr.sin_addr.s_addr = INADDR_ANY;
-    server_addr.sin_addr.s_addr = inet_addr(ipaddr);
 
+    //Resolve the specified hostname for binding, if specified
+    if(hostname)
+    {
+        sprintf(port_str, "%u", port);
+        if(!hostname_to_ip(hostname, port_str, ipaddr_used))
+            return;
+        server_addr.sin_addr.s_addr = inet_addr(ipaddr_used);
+    }
+    else
+        server_addr.sin_addr.s_addr = INADDR_ANY;
+
+    //Record the string of the IP address we chose
+    inet_ntop(AF_INET, &server_addr.sin_addr, ipaddr_used, INET_ADDRSTRLEN);
+
+    /*Bind specified IP/Port to the socket*/
     if(bind(server_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
-        perror("Failed to bind socket!");
+        printf("Failed to bind socket at %s:%u. \n", ipaddr_used, ntohs(server_addr.sin_port));
+        perror("");
         return;
     }
-
 
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
@@ -793,6 +807,8 @@ void server(const char* ipaddr, const int port)
         perror("Failed to listen to the socket!");
         return;
     }
+
+    printf("Listening for new client connections at %s:%u...\n", ipaddr_used, ntohs(server_addr.sin_port));
 
     /*Begin handling requests*/
     server_main_loop();

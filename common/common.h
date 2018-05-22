@@ -20,7 +20,7 @@
 #include "../library/uthash/utlist.h"                //http://troydhanson.github.io/uthash/utlist.html
 
 
-
+#define DEFAULT_SERVER_PORT     6996
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
 #define BUFSIZE                 4096                                //Buffer size used to hold a single received message or piece of data
@@ -46,7 +46,7 @@ typedef struct namelist {
 } Namelist;
 
 
-
+int hostname_to_ip(const char* hostname, const char* port, char* ip_return);
 void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 int update_epoll_events(int epoll_fd, int socketfd, int event_flags);

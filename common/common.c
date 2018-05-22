@@ -2,6 +2,37 @@
 #include <string.h>
 
 
+int hostname_to_ip(const char* hostname, const char* port, char* ip_return)
+{
+    int sockfd;  
+    struct addrinfo hints, *results;
+    
+    struct addrinfo *cur;
+    struct sockaddr_in *cur_info;
+ 
+    memset(&hints, 0, sizeof(struct addrinfo));
+    hints.ai_family = AF_INET;                      //We only cares about ipv4 for now
+    hints.ai_socktype = SOCK_STREAM;
+    hints.ai_flags = AI_PASSIVE;
+ 
+    if(getaddrinfo(hostname, port, &hints, &results) != 0)
+    {
+        perror("Failed to resolve hostname");
+        return 0;
+    }
+
+    //Walk through the list of results and pick ONE IP address (there usually is only one in the results list)
+    for(cur = results; cur != NULL; cur = cur->ai_next) 
+    {
+        cur_info = (struct sockaddr_in *) cur->ai_addr;
+        strcpy(ip_return , inet_ntoa(cur_info->sin_addr) );
+    }
+     
+    freeaddrinfo(results);
+    return 1;
+}
+
+
 void remove_newline(char *str)
 {
     int last = strlen(str)-1;

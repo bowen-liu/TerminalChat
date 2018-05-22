@@ -71,6 +71,41 @@ static int new_transfer_connection(FileXferArgs *args)
 }
 
 
+FileInfo* find_pending_xfer(char *sender_name)
+{
+    FileInfo *curr, *temp; 
+
+    //Find the file associated with the sender
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, sender_name) == 0)
+            break;
+        else
+            curr = NULL;
+    }
+    
+    return curr;
+}
+
+
+unsigned int delete_pending_xfer(char *sender_name)
+{
+    unsigned int count = 0;
+    FileInfo *curr, *temp; 
+
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, sender_name) == 0)
+        {
+            LL_DELETE(incoming_transfers, curr);
+            free(curr);
+            ++count;
+        }
+    }
+    
+    return count;
+}
+
 
 /******************************/
 /*          File Send         */
@@ -248,7 +283,7 @@ int file_send_next(FileXferArgs *args)
 
     args->transferred += bytes;
     printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
-    //sleep(1);
+    sleep(1);
 
     if(args->transferred < args->filesize)
         return bytes;

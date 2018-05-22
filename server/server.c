@@ -69,7 +69,7 @@ static inline void cleanup_user_connection(Client *c)
     printf("Disconnecting \"%s\"...\n", c->username);
     
     //If the disconnecting user has an ongoing transfer connection, kill it first.
-    close_associated_xfer_connection(c);
+    cancel_user_transfer(c);
 
     //Close the main user's connection
     kill_connection(c->socketfd);
@@ -512,6 +512,9 @@ static inline int parse_client_command()
 
     else if(strncmp(buffer, "!acceptfile=", 12) == 0)
         return accepted_file_transfer();
+
+    else if(strncmp(buffer, "!rejectfile=", 12) == 0)
+        return rejected_file_transfer();
 
     else if(strncmp(buffer, "!cancelfile", 11) == 0)
         return user_cancelled_transfer();

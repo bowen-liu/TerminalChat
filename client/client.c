@@ -251,20 +251,13 @@ static int outgoing_file()
 static int accept_incoming_file()
 {
     char target_name[USERNAME_LENG+1];
-    FileInfo *curr, *temp; 
+    FileInfo *pending_xfer;
 
     sscanf(buffer, "!acceptfile=%s",target_name);
 
     //Find the file associated with the sender
-    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
-    {
-        if(strcmp(curr->target_name, target_name) == 0)
-            break;
-        else
-            curr = NULL;
-    }
-
-    if(!curr)
+    pending_xfer = find_pending_xfer(target_name);
+    if(!pending_xfer)
     {
         printf("User \"%s\" hasn't offered any files.\n", target_name);
         return 0;
@@ -272,13 +265,13 @@ static int accept_incoming_file()
 
     file_transfers = calloc(1, sizeof(FileXferArgs));
     strcpy(file_transfers->target_name, target_name);
-    strcpy(file_transfers->filename, curr->filename);
-    strcpy(file_transfers->token, curr->token);
-    file_transfers->filesize = curr->filesize;
-    file_transfers->checksum = curr->checksum;
+    strcpy(file_transfers->filename, pending_xfer->filename);
+    strcpy(file_transfers->token, pending_xfer->token);
+    file_transfers->filesize = pending_xfer->filesize;
+    file_transfers->checksum = pending_xfer->checksum;
 
-    LL_DELETE(incoming_transfers, curr);
-    free(curr);
+    LL_DELETE(incoming_transfers, pending_xfer);
+    free(pending_xfer);
 
     return new_recv_cmd(file_transfers);
 }
@@ -286,12 +279,21 @@ static int accept_incoming_file()
 
 static int reject_incoming_file()
 {
-    /*char reject_msg[BUFSIZE + MAX_FILENAME]; 
+    char target_name[USERNAME_LENG+1];
 
-    sprintf(reject_msg, "!rejectfile=%s,from=%s", args->filename, args->target_name);
-    return send_msg(reject_msg, strlen(reject_msg)+1);*/
+    sscanf(buffer, "!rejectfile=%s", target_name);
+    if(delete_pending_xfer(target_name) == 0)
+    {
+        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        return 0;
+    }
+
+    sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
+    send_msg(buffer, strlen(buffer)+1);
+
     return 0;
 }
+
 
 static int cancel_ongoing_file_transfer()
 {
@@ -302,10 +304,12 @@ static int cancel_ongoing_file_transfer()
     }
 
     printf("Ongoing transfer has been cancelled.\n");
-    sprintf(buffer,"!cancelfile=%s,reason=%s", file_transfers->target_name, "UserCancelled");
+    sprintf(buffer,"!cancelfile=%s,reason=%s", 
+            file_transfers->target_name, (file_transfers->operation == SENDING_OP)? "SenderCancelled":"RecverCancelled");
+    send_msg(buffer, strlen(buffer)+1);
     cancel_transfer(file_transfers);
-    
-    return 1;
+
+    return 0;
 }
 
 
@@ -503,23 +507,15 @@ static void parse_userlist()
 static int incoming_file()
 {
     FileInfo *fileinfo = calloc(1,sizeof(FileInfo));
-    FileInfo *curr, *temp;
 
     parse_send_cmd_recver(buffer, fileinfo);
     printf("User \"%s\" would like to send you the file \"%s\" (%zu bytes, crc: %x, token: %s)\n", 
             fileinfo->target_name, fileinfo->filename, fileinfo->filesize,fileinfo->checksum, fileinfo->token);
 
-    //If the same user has offered any other files previously, delete it
-    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
-    {
-        if(strcmp(curr->target_name, fileinfo->target_name) == 0)
-        {
-            LL_DELETE(incoming_transfers, curr);
-            free(curr);
-        }
-    }
-
+    //If the same user has offered any other files previously, delete them
+    delete_pending_xfer(fileinfo->target_name);
     LL_APPEND(incoming_transfers, fileinfo);
+
     return 1;
 }
 

@@ -132,6 +132,7 @@ int validate_transfer_target (FileXferArgs_Server *request, char* request_userna
 /*        Disconnection       */
 /******************************/ 
 
+//Client "c" MUST be a transfer connection!
 void cleanup_transfer_connection(Client *c)
 {
     FileXferArgs_Server *xferargs = c->file_transfers;
@@ -169,58 +170,33 @@ void cleanup_transfer_connection(Client *c)
     }
 }
 
-int close_associated_xfer_connection(Client *c)
+//Client "c" MUST be a USER connection!
+void cancel_user_transfer(Client *c)
 {
     Client *xfer_connection;
 
     if(!c->file_transfers)
-        return 0;
+        return;
 
-    printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
-
+    //If the client already has an ongoing file transfer in progress
     HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
-    if(!xfer_connection)
+    if(xfer_connection)
     {
-        printf("Could not locate associated transfer connection with disconnecting client!\n");
-        return 0;
-    } 
+       printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
+       cleanup_transfer_connection(xfer_connection);
+       c->file_transfers = NULL;
+       return;
+    }
 
-    cleanup_transfer_connection(xfer_connection);
+    //If the client only has pending transfer invites
+    if(c->file_transfers->timeout)
+        cleanup_timer_event(c->file_transfers->timeout);
+
+    free(c->file_transfers);
     c->file_transfers = NULL;
 
-    return 1;
 }
 
-int user_cancelled_transfer()
-{
-    
-    char target_name[USERNAME_LENG+1];
-    char reason[MAX_MSG_LENG+1];
-    
-    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
-    printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
-
-    if(!current_client->file_transfers)
-    {
-        printf("User has no pending or ongoing file transfer.\n");
-        return 0;
-    }
-
-    //Notify the target 
-    sprintf(buffer, "!cancelfile=%s,reason=%s", current_client->username, reason);
-    send_msg(current_client->file_transfers->target->c, buffer, strlen(buffer)+1);
-        
-    if(current_client->file_transfers->timeout)
-    {
-        cleanup_timer_event(current_client->file_transfers->timeout);
-        free(current_client->file_transfers);
-        current_client->file_transfers = NULL;
-    }
-    else
-        close_associated_xfer_connection(current_client);
-
-    return 1;
-}
 
 int transfer_invite_expired(Client *c)
 {
@@ -440,6 +416,59 @@ int accepted_file_transfer()
     sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
             xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
     return send_msg(xferargs->target->c, buffer, strlen(buffer)+1);
+}
+
+
+int rejected_file_transfer()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+    User *target;
+
+    sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
+
+    HASH_FIND_STR(active_users, target_name, target);
+    if(!target->c->file_transfers || strcmp(target->c->file_transfers->target->username, current_client->username) != 0)
+    {
+        printf("User has no pending file transfer.\n");
+        send_msg(current_client, "NoFileFound", 12); 
+        return 0;
+    }
+
+    printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+    send_msg(current_client, "Cancelled", 10); 
+
+    //Notify the target 
+    sprintf(buffer, "!rejectfile=%s,reason=%s", current_client->username, reason);
+    send_msg(target->c, buffer, strlen(buffer)+1);
+    cancel_user_transfer(target->c);
+
+    return 1;
+}
+
+
+int user_cancelled_transfer()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+    
+    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
+
+    if(!current_client->file_transfers)
+    {
+        printf("User has no pending or ongoing file transfer to cancel.\n");
+        send_msg(current_client, "NoFileFound", 12); 
+        return 0;
+    }
+    printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+    send_msg(current_client, "Cancelled", 10); 
+
+    //Notify the target 
+    sprintf(buffer, "!cancelfile=%s,reason=%s", current_client->username, reason);
+    send_msg(current_client->file_transfers->target->c, buffer, strlen(buffer)+1);    
+    cancel_user_transfer(current_client);
+
+    return 1;
 }
 
 

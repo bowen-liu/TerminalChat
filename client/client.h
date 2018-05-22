@@ -21,6 +21,7 @@ extern struct sockaddr_in server_addr;
 extern int epoll_fd;
 extern char* my_username;
 extern FileXferArgs *file_transfers;
+extern FileInfo *incoming_transfers; 
 
 extern char *buffer;
 

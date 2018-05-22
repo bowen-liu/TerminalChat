@@ -45,7 +45,10 @@ typedef struct fileinfo{
 } FileInfo;
 
 
+/*Connection and helpers*/
 void cancel_transfer(FileXferArgs *args);
+FileInfo* find_pending_xfer(char *sender_name);
+unsigned int delete_pending_xfer(char *sender_name);
 
 
 /*Sending*/

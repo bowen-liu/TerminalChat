@@ -122,3 +122,4 @@ Namelist* find_from_namelist(Namelist* list, char *name)
 
     return curr;
 }
+

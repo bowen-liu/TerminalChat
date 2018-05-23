@@ -7,6 +7,9 @@
 #include <sys/timerfd.h>
 
 
+#define XFER_SENDER_EPOLL_EVENTS    (EPOLLRDHUP | EPOLLIN | EPOLLONESHOT)
+#define XFER_RECVER_EPOLL_EVENTS    (EPOLLRDHUP | EPOLLOUT | EPOLLONESHOT)
+
 
 /******************************/
 /*     Helpers and Shared     */
@@ -271,6 +274,7 @@ int register_send_transfer_connection()
     printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
             xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
     
+    update_epoll_events(connections_epollfd, current_client->socketfd, XFER_SENDER_EPOLL_EVENTS);
     return 0;
 }
 
@@ -318,7 +322,7 @@ int register_recv_transfer_connection()
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
             xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
-    update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
+    update_epoll_events(connections_epollfd, current_client->socketfd, XFER_RECVER_EPOLL_EVENTS);
     return 0;
 }
 
@@ -481,6 +485,7 @@ int user_cancelled_transfer()
 }
 
 
+/* FORWARDING FILE PIECES */
 
 //The receiver is ready for receiving the next piece (EPOLLOUT received)
 int client_data_forward_recver_ready()
@@ -492,31 +497,31 @@ int client_data_forward_recver_ready()
     int bytes, bytes_sent;
 
 
-    //Was the last received piece still has pending bytes to be forwarded?
-    if(sender_xferargs->piece_size > 0)
+    //Nothing to send if the last piece has been completely forwarded
+    if(sender_xferargs->piece_size == 0)
     {
-        printf("Piece size: %zu, piece transferred %zu\n", sender_xferargs->piece_size, sender_xferargs->piece_transferred);
-        
-        bytes = sender_xferargs->piece_size - sender_xferargs->piece_transferred;
-        if(bytes <= 0)
-        {
-            sender_xferargs->piece_size = 0;
-            sender_xferargs->piece_transferred = 0;
-            return 0;
-        }
-
-        bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes);
-        //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
-        if(bytes_sent < 0)
-        {
-            perror("Failed to send the current piece");
-            return -1;
-        }
-    }
-    else
-    {
-        //printf("No need to send right now...\n");
+        //Rearm epoll notifications for both sender and receiver for the next piece
+        update_epoll_events(connections_epollfd, sender_xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
+        update_epoll_events(connections_epollfd, current_client->socketfd, XFER_RECVER_EPOLL_EVENTS);
         return 0;
+    }
+       
+
+    //printf("Piece size: %zu, piece transferred %zu\n", sender_xferargs->piece_size, sender_xferargs->piece_transferred);
+    bytes = sender_xferargs->piece_size - sender_xferargs->piece_transferred;
+    if(bytes <= 0)
+    {
+        sender_xferargs->piece_size = 0;
+        sender_xferargs->piece_transferred = 0;
+        return 0;
+    }
+
+    bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes);
+    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
+    if(bytes_sent < 0)
+    {
+        perror("Failed to send the current piece");
+        return -1;
     }
 
     xferargs->transferred += bytes_sent;
@@ -528,6 +533,9 @@ int client_data_forward_recver_ready()
     {
         sender_xferargs->piece_size = 0;
         sender_xferargs->piece_transferred = 0;
+
+        //Rearm epoll notifications for sender (to send the next piece)
+        update_epoll_events(connections_epollfd, sender_xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
     }
 
     printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
@@ -535,6 +543,9 @@ int client_data_forward_recver_ready()
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
+    else
+        //Rearm epoll notifications for receiver (to receive the next chunk/piece)
+        update_epoll_events(connections_epollfd, current_client->socketfd, XFER_RECVER_EPOLL_EVENTS);
 
     return bytes_sent;
 }
@@ -548,32 +559,24 @@ int client_data_forward_sender_ready()
 
     char *myname = xferargs->myself->username;
     int bytes, bytes_sent;
-
-
-    /*if(xferargs->operation == RECVING_OP)
-    {
-        printf("Received a message from \"%s\" RECV xfer connection. Ignoring...\n", myname);
-        return 0;
-    }*/
     
-    if(xferargs->piece_size == 0)
-    {
-        //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
-        bytes = recv_msg(current_client, xferargs->piece_buffer, BUFSIZE);
-        if(!bytes)
-            return 0;
+    //Do not receive a new piece from the sender if the last piece hasn't been fully forwarded yet
+    if(xferargs->piece_size > 0)
+        return 0;
 
-        xferargs->piece_size = bytes;
-        bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, bytes);
-        //bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
-        if(bytes_sent < 0)
-        {
-            perror("Failed to send the current piece");
-            return -1;
-        }
-    }
-    else
-        return 0;       //The last piece hasn't been fully sent yet
+    //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
+    bytes = recv_msg(current_client, xferargs->piece_buffer, BUFSIZE);
+    if(!bytes)
+        return 0;
+
+    xferargs->piece_size = bytes;
+    bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, bytes);
+    //bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
+    if(bytes_sent < 0)
+    {
+        perror("Failed to send the current piece");
+        return -1;
+    }    
 
     recver_xferargs->transferred += bytes_sent;
     xferargs->transferred += bytes_sent;
@@ -591,6 +594,9 @@ int client_data_forward_sender_ready()
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
+    else
+        //Rearm epoll notifications for receiver (to receive the next chunk/piece)
+        update_epoll_events(connections_epollfd, recver_xferargs->xfer_socketfd, XFER_RECVER_EPOLL_EVENTS);
 
     return bytes_sent;
 }

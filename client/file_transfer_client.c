@@ -17,6 +17,13 @@
 //Defined in library/crc32/crc32.c
 extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);
 
+int path_is_file(const char *path)
+{
+    struct stat path_stat;
+    stat(path, &path_stat);
+    return S_ISREG(path_stat.st_mode);
+}
+
 void cancel_transfer(FileXferArgs *args)
 {
     //Close network connections
@@ -151,6 +158,14 @@ int new_send_cmd(FileXferArgs *args)
     if(!args->file_fp)
     {
         perror("Requested file not found!");
+        return 0;
+    }
+
+    //Make sure this is a regular file and not a directory
+    if(!path_is_file(args->target_file))
+    {
+        printf("Cannot send \"%s\". This is not a regular file.\n", args->target_file);
+        fclose(args->file_fp);
         return 0;
     }
 

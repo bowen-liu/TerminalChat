@@ -6,7 +6,7 @@
 #include "file_transfer_server.h"
 
 
-#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLIN | EPOLLRDHUP)
+#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLRDHUP | EPOLLIN)
 
 
 /*Shared Server Variables*/

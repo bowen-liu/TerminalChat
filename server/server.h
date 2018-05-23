@@ -6,10 +6,14 @@
 #include "file_transfer_server.h"
 
 
+#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLIN | EPOLLRDHUP)
+
+
 /*Shared Server Variables*/
 
 extern int server_socketfd;
 extern struct sockaddr_in server_addr;
+extern int connections_epollfd;
 
 extern char *buffer;
 extern size_t buffer_size;
@@ -30,6 +34,7 @@ unsigned int send_msg_direct(int socketfd, char* buffer, size_t size);
 unsigned int send_msg(Client *c, char* buffer, size_t size);
 unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
 void send_new_long_msg(char* buffer, size_t size);
+unsigned int recv_msg(Client *c, char* buffer, size_t size);
 
 
 #endif

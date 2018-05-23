@@ -19,8 +19,14 @@ typedef struct filexferargs_server {
     size_t transferred;
     unsigned int checksum;
     char token[TRANSFER_TOKEN_SIZE+1];
-
+    
     TimerEvent *timeout;
+
+    //Used by SENDERs only to deal with partial sends
+    unsigned char* piece_buffer;
+    size_t piece_size;
+    size_t piece_transferred;
+    unsigned int next_piece_ready :1;
 
 } FileXferArgs_Server;
 
@@ -33,11 +39,14 @@ int transfer_invite_expired(Client *c);
 int register_recv_transfer_connection();
 int register_send_transfer_connection();
 
-int client_data_forward(char *buffer, size_t bytes);
+
 int new_client_transfer();
 int accepted_file_transfer();
 int rejected_file_transfer();
 int user_cancelled_transfer();
+
+int client_data_forward_recver_ready();
+int client_data_forward_sender_ready();
 
 
 #endif

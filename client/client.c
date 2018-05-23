@@ -31,6 +31,11 @@ FileXferArgs *file_transfers;                           //The current file trans
 
 
 
+static void exit_cleanup()
+{
+    close(my_socketfd);
+}
+
 /******************************/
 /*     Basic Send/Receive     */
 /******************************/
@@ -742,6 +747,8 @@ void client(const char* hostname, const unsigned int port,  char *username)
     int retval;
     char ipaddr[INET_ADDRSTRLEN], port_str[8];
 
+    atexit(exit_cleanup);
+
     if(!name_is_valid(username))
         return;
     
@@ -778,14 +785,13 @@ void client(const char* hostname, const unsigned int port,  char *username)
     server_addr.sin_addr.s_addr = inet_addr(ipaddr);
 
     //Connect to the server
-    printf("Connection to server at %s:%u... \n", ipaddr, ntohs(server_addr.sin_port));
+    printf("Connecting to server at %s:%u... \n", ipaddr, ntohs(server_addr.sin_port));
     if(connect(my_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
         perror("Failed to connect to server.");
         return;
     }
     printf("Connected!\n");
-
    
 
     //Register with the server
@@ -795,7 +801,7 @@ void client(const char* hostname, const unsigned int port,  char *username)
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
     if(!register_fd_with_epoll(epoll_fd, my_socketfd, CLIENT_EPOLL_FLAGS))
-            return;   
+        return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
     if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))

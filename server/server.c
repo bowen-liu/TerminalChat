@@ -3,14 +3,11 @@
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 
-#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLIN | EPOLLRDHUP)
 
 //Server socket structures
 int server_socketfd;
 struct sockaddr_in server_addr;                     //"struct sockaddr_in" can be casted as "struct sockaddr" for binding
-
-//epoll FD for handling multiple clients, and event timers
-static int connections_epollfd;  
+int connections_epollfd;  
 
 //Receive buffers
 char *buffer;
@@ -119,6 +116,11 @@ void cleanup_timer_event(TimerEvent *event)
 
     HASH_DEL(timers, event);
     free(event);
+}
+
+static void exit_cleanup()
+{
+    close(server_socketfd);
 }
 
 
@@ -269,7 +271,7 @@ void send_new_long_msg(char* buffer, size_t size)
 }
 
 
-static unsigned int recv_msg(Client *c, char* buffer, size_t size)
+unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
     int bytes = recv(c->socketfd, buffer, BUFSIZE, 0);
     if(bytes < 0)
@@ -556,7 +558,7 @@ static inline int handle_new_connection()
     //Add the client into active_connections, and use its socketfd as the key.
     HASH_ADD_INT(active_connections, socketfd, new_client);
 
-    //Register the new client's FD into epoll's event list (edge triggered), and mark it as nonblocking
+    //Register the new client's FD into epoll's event list, and mark it as nonblocking
     fcntl(new_client->socketfd, F_SETFL, O_NONBLOCK);
     if(!register_fd_with_epoll(connections_epollfd, new_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS))
         return 0;    
@@ -571,16 +573,15 @@ static inline int handle_new_connection()
 static inline int handle_client_msg()
 {
     int bytes, retval;
-    
-    bytes = recv_msg(current_client, buffer, BUFSIZE);
-    if(!bytes)
-        return 0;
-    
 
     //If this connection is a transfer connection, forward the data contained directly to its target
     if(current_client->connection_type == TRANSFER_CONNECTION)
-        return client_data_forward(buffer, bytes); 
-
+        return client_data_forward_sender_ready(); 
+    
+    //Otherwise, read the regular user's message into the global buffer for further processing
+    bytes = recv_msg(current_client, buffer, BUFSIZE);
+    if(!bytes)
+        return 0;
     
     printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
     printf("%.*s\n", bytes, buffer);
@@ -731,6 +732,9 @@ static inline void server_main_loop()
                 {
                     if(current_client->pending_size > 0)
                         send_long_msg();
+
+                    else if(current_client->connection_type == TRANSFER_CONNECTION)
+                        client_data_forward_recver_ready();
                 }
             }    
         }
@@ -744,6 +748,8 @@ static inline void server_main_loop()
 void server(const char* hostname, const unsigned int port)
 {   
     char ipaddr_used[INET_ADDRSTRLEN], port_str[8];
+
+    atexit(exit_cleanup);
 
     /*Initialize network buffer*/
     buffer = calloc(BUFSIZE, sizeof(char));
@@ -784,6 +790,9 @@ void server(const char* hostname, const unsigned int port)
     //Record the string of the IP address we chose
     inet_ntop(AF_INET, &server_addr.sin_addr, ipaddr_used, INET_ADDRSTRLEN);
 
+    //Allow the socket to be bound to the same address (in case if it crashes or didn't have a clean exit)
+    setsockopt(server_socketfd, SOL_SOCKET, SO_REUSEADDR, &(int){1}, sizeof(int));
+
     /*Bind specified IP/Port to the socket*/
     if(bind(server_socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr)) < 0)
     {
@@ -795,7 +804,7 @@ void server(const char* hostname, const unsigned int port)
     /*Register the server socket to the epoll list, and also mark it as nonblocking*/
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
     if(!register_fd_with_epoll(connections_epollfd, server_socketfd, EPOLLIN))
-            return;   
+        return;   
     
     /*Register stdin (fd = 0) to the epoll list*/
     if(!register_fd_with_epoll(connections_epollfd, 0, EPOLLIN))

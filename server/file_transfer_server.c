@@ -6,6 +6,8 @@
 #include <time.h>
 #include <sys/timerfd.h>
 
+
+
 /******************************/
 /*     Helpers and Shared     */
 /******************************/ 
@@ -155,6 +157,10 @@ void cleanup_transfer_connection(Client *c)
     target_xferargs = xferargs->target->c->file_transfers;
 
     kill_connection(c->socketfd);
+    
+    if(xferargs->piece_buffer)
+        free(xferargs->piece_buffer);
+    
     free(xferargs);
     c->file_transfers = NULL;
 
@@ -255,6 +261,7 @@ int register_send_transfer_connection()
     xferargs->xfer_socketfd =  current_client->socketfd;
     xferargs->operation = SENDING_OP;
     xferargs->target = target;
+    xferargs->piece_buffer = malloc(BUFSIZE);
 
     current_client->connection_type = TRANSFER_CONNECTION;
     current_client->file_transfers = xferargs;
@@ -263,6 +270,7 @@ int register_send_transfer_connection()
     send_msg(current_client, buffer, strlen(buffer)+1);
     printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
             xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
+    
     return 0;
 }
 
@@ -310,6 +318,7 @@ int register_recv_transfer_connection()
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
             xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
+    update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
     return 0;
 }
 
@@ -472,28 +481,116 @@ int user_cancelled_transfer()
 }
 
 
-int client_data_forward(char *buffer, size_t bytes)
-{
-    int recver_xfer_socketfd;
-    char *myname = current_client->file_transfers->myself->username;
-    int bytes_sent;
 
-    if(current_client->file_transfers->operation == RECVING_OP)
+//The receiver is ready for receiving the next piece (EPOLLOUT received)
+int client_data_forward_recver_ready()
+{
+    FileXferArgs_Server *xferargs = current_client->file_transfers;
+    FileXferArgs_Server *sender_xferargs = current_client->file_transfers->target->c->file_transfers;
+
+    char *myname = xferargs->myself->username;
+    int bytes, bytes_sent;
+
+
+    //Was the last received piece still has pending bytes to be forwarded?
+    if(sender_xferargs->piece_size > 0)
+    {
+        printf("Piece size: %zu, piece transferred %zu\n", sender_xferargs->piece_size, sender_xferargs->piece_transferred);
+        
+        bytes = sender_xferargs->piece_size - sender_xferargs->piece_transferred;
+        if(bytes <= 0)
+        {
+            sender_xferargs->piece_size = 0;
+            sender_xferargs->piece_transferred = 0;
+            return 0;
+        }
+
+        bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes);
+        //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
+        if(bytes_sent < 0)
+        {
+            perror("Failed to send the current piece");
+            return -1;
+        }
+    }
+    else
+    {
+        //printf("No need to send right now...\n");
+        return 0;
+    }
+
+    xferargs->transferred += bytes_sent;
+    sender_xferargs->transferred += bytes_sent;
+    sender_xferargs->piece_transferred += bytes_sent;
+
+    //Were we able to forward the entire received piece?
+    if(sender_xferargs->piece_transferred >= sender_xferargs->piece_size)
+    {
+        sender_xferargs->piece_size = 0;
+        sender_xferargs->piece_transferred = 0;
+    }
+
+    printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
+            bytes_sent, xferargs->transferred, xferargs->filesize, myname, xferargs->target->username);
+
+    if(xferargs->transferred == xferargs->filesize)
+        printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
+
+    return bytes_sent;
+}
+
+
+//The sender has a new piece ready (EPOLLIN received)
+int client_data_forward_sender_ready()
+{
+    FileXferArgs_Server *xferargs = current_client->file_transfers;
+    FileXferArgs_Server *recver_xferargs = current_client->file_transfers->target->c->file_transfers;
+
+    char *myname = xferargs->myself->username;
+    int bytes, bytes_sent;
+
+
+    /*if(xferargs->operation == RECVING_OP)
     {
         printf("Received a message from \"%s\" RECV xfer connection. Ignoring...\n", myname);
         return 0;
+    }*/
+    
+    if(xferargs->piece_size == 0)
+    {
+        //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
+        bytes = recv_msg(current_client, xferargs->piece_buffer, BUFSIZE);
+        if(!bytes)
+            return 0;
+
+        xferargs->piece_size = bytes;
+        bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, bytes);
+        //bytes_sent = send_msg_direct(recver_xferargs->xfer_socketfd, xferargs->piece_buffer, (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
+        if(bytes_sent < 0)
+        {
+            perror("Failed to send the current piece");
+            return -1;
+        }
     }
-    
-    recver_xfer_socketfd = current_client->file_transfers->target->c->file_transfers->xfer_socketfd;
-    current_client->file_transfers->transferred += bytes;
+    else
+        return 0;       //The last piece hasn't been fully sent yet
 
-    printf("Forwarding %zu bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
-            bytes, current_client->file_transfers->transferred, current_client->file_transfers->filesize, myname, current_client->file_transfers->target->username);
-    
-    bytes_sent = send_msg_direct(recver_xfer_socketfd, buffer, bytes);
+    recver_xferargs->transferred += bytes_sent;
+    xferargs->transferred += bytes_sent;
+    xferargs->piece_transferred += bytes_sent;
 
-    if(current_client->file_transfers->transferred == current_client->file_transfers->filesize)
-        printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", current_client->file_transfers->target->username);
+    //Were we able to forward the entire received piece?
+    if(xferargs->piece_transferred >= xferargs->piece_size)
+    {
+        xferargs->piece_size = 0;
+        xferargs->piece_transferred = 0;
+    }
+
+    printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
+            bytes_sent, xferargs->transferred, xferargs->filesize, myname, xferargs->target->username);
+
+    if(xferargs->transferred == xferargs->filesize)
+        printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
 
     return bytes_sent;
 }

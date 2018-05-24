@@ -6,11 +6,13 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#include <sys/timerfd.h>
 
 
-#define RECV_CHUNK_SIZE     BUFSIZE
-//#define RECV_CHUNK_SIZE     64
-#define CLIENT_RECV_FOLDER "files_received"
+#define RECV_CHUNK_SIZE             BUFSIZE
+//#define RECV_CHUNK_SIZE           64
+#define CLIENT_RECV_FOLDER          "files_received"
+#define PRINT_XFER_PROGRESS_PERIOD  1
 
 
 typedef struct {
@@ -29,7 +31,11 @@ typedef struct {
     size_t transferred;
     unsigned int checksum;
 
-} FileXferArgs;     //Also see FileXferArgs_Server
+    //Timer that periodically notifies the current transfer's progress
+    int timerfd;
+    size_t last_transferred;        
+
+} FileXferArgs;         //Also see FileXferArgs_Server
 
 
 typedef struct fileinfo{
@@ -49,6 +55,7 @@ typedef struct fileinfo{
 void cancel_transfer(FileXferArgs *args);
 FileInfo* find_pending_xfer(char *sender_name);
 unsigned int delete_pending_xfer(char *sender_name);
+void print_transfer_progress();
 
 
 /*Sending*/

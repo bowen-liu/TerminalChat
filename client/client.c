@@ -706,7 +706,7 @@ static inline void client_main_loop()
                     printf("%s\n", buffer);
             }
 
-            //Data from other transfer connections
+            //Data from other transfer connections (or related fd's)
             else
             {   
                 if(!file_transfers)
@@ -715,6 +715,14 @@ static inline void client_main_loop()
                     continue;
                 }
                 
+                //Was this event raised by the timer, instead of the actual connection?
+                if(events[i].data.fd == file_transfers->timerfd)
+                {
+                    print_transfer_progress();
+                    continue;
+                }
+
+
                 //The transfer connection has been terminated by the server (upon completion or failure)
                 if(events[i].events & EPOLLRDHUP)
                 {

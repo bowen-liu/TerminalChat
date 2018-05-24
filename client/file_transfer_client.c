@@ -36,6 +36,10 @@ void cancel_transfer(FileXferArgs *args)
         printf("Closing transfer connection (%s) with \"%s\" \n", 
                 (args->operation == SENDING_OP)? "SEND":"RECV", args->target_name);
     }
+
+    //Destroy the progress timer
+    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->timerfd, NULL);
+    close(args->timerfd);
     
     //Free or unmap transfer buffers, and close files
     if(args->operation == SENDING_OP)
@@ -44,7 +48,7 @@ void cancel_transfer(FileXferArgs *args)
         free(args->file_buffer);
     fclose(args->file_fp);
     
-    //Free the args object
+    //Free the transfer args object
     free(args);
     file_transfers = NULL;
 }
@@ -111,6 +115,46 @@ unsigned int delete_pending_xfer(char *sender_name)
     }
     
     return count;
+}
+
+void print_transfer_progress()
+{
+    uint64_t timer_retval;
+    float percent_completed;
+
+    size_t transferred_this_period;
+    float speed;
+    char *speed_unit;
+
+    if(!read(file_transfers->timerfd, &timer_retval, sizeof(uint64_t)))
+        perror("Failed to read timer event.");
+
+    //Print amount received so far, and completion percentage
+    percent_completed = ((float)file_transfers->transferred / file_transfers->filesize) * 100;
+    printf("%s %zu/%zu bytes (%.2f %%). ", 
+              (file_transfers->operation == SENDING_OP)? "Sent":"Received", file_transfers->transferred, file_transfers->filesize, percent_completed);
+
+    //Estimate the current transfer speed
+    transferred_this_period = file_transfers->transferred - file_transfers->last_transferred;
+    file_transfers->last_transferred = file_transfers->transferred;
+
+    if(transferred_this_period > 1000000)
+    {
+        speed = (float)transferred_this_period / 1000000;
+        speed_unit = "MB/s";
+    }
+    else if(transferred_this_period > 1000)
+    {
+        speed = (float)transferred_this_period / 1000;
+        speed_unit = "KB/s";
+    }
+    else
+    {
+        speed = (float)transferred_this_period;
+        speed_unit = "B/s";
+    }
+
+    printf("%.2f %s\n", speed, speed_unit);
 }
 
 
@@ -275,6 +319,9 @@ int recver_accepted_file(char* buffer)
     fcntl(file_transfers->socketfd, F_SETFL, O_NONBLOCK);
     register_fd_with_epoll(epoll_fd, file_transfers->socketfd, EPOLLOUT | EPOLLRDHUP);
 
+    //Create a timerfd to periodically print the transfer progress
+    file_transfers->timerfd = create_timerfd(PRINT_XFER_PROGRESS_PERIOD, 1, epoll_fd);
+
     return file_transfers->socketfd;
 }
 
@@ -297,16 +344,18 @@ int file_send_next(FileXferArgs *args)
     }
 
     args->transferred += bytes;
-    printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
-    sleep(1);
+    //printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
+    //sleep(1);
 
     if(args->transferred < args->filesize)
         return bytes;
 
-    //Leave the sending transfer connection idle, and wait for the server to close it (recver has received all pending byes)
+    //Transfer has completed!
+    print_transfer_progress();
     printf("Completed file transfer! Waiting for server to close the transfer connection...\n");
+
+    //Leave the sending transfer connection idle, and wait for the server to close it (recver has received all pending byes)
     update_epoll_events(epoll_fd, args->socketfd, EPOLLRDHUP);
-    //cancel_transfer(args);
 
     return bytes;
 }
@@ -444,6 +493,9 @@ int new_recv_cmd(FileXferArgs *args)
     fcntl(args->socketfd, F_SETFL, O_NONBLOCK);
     register_fd_with_epoll(epoll_fd, args->socketfd, EPOLLIN | EPOLLRDHUP);
 
+    //Create a timerfd to periodically print the transfer progress
+    file_transfers->timerfd = create_timerfd(PRINT_XFER_PROGRESS_PERIOD, 1, epoll_fd);
+
     return args->socketfd;
 }
 
@@ -471,12 +523,14 @@ int file_recv_next(FileXferArgs *args)
     }
 
     args->transferred += bytes;
-    printf("%zu\\%zu bytes received from \"%s\"\n", args->transferred, args->filesize, args->target_name);
+   // printf("Received %zu\\%zu bytes from \"%s\"\n", args->transferred, args->filesize, args->target_name);
 
     //Has the entire message been received?
     if(args->transferred < args->filesize)
         return bytes;
-        
+    
+    //Transfer has completed!
+    print_transfer_progress();
     printf("Completed file transfer!\n");
     
     //Verify file integrity, and then cleanup and close the transfer connection

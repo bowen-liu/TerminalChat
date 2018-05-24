@@ -123,3 +123,52 @@ Namelist* find_from_namelist(Namelist* list, char *name)
     return curr;
 }
 
+int create_timerfd(int period_sec, int is_periodic, int epoll_fd)
+{
+    int timerfd;
+    struct itimerspec timer_value;
+    int epoll_events;
+    
+    //Create the timer
+    timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
+    if(timerfd < 0)
+    {
+        perror("Failed to create a timerfd.");
+        return 0;
+    }
+
+    //Set the timer type (periodic or oneshot) and duration
+    memset(&timer_value, 0, sizeof(struct itimerspec));
+    timer_value.it_value.tv_sec = period_sec;
+
+    if(is_periodic > 0)
+    {
+        epoll_events = EPOLLIN;
+        timer_value.it_interval.tv_sec = period_sec;
+    }
+    else
+        epoll_events = EPOLLIN | EPOLLONESHOT;
+        
+
+    //Register with epoll, if epoll_fd was specified
+    if(epoll_fd && !register_fd_with_epoll(epoll_fd, timerfd, epoll_events))
+    {
+        close(timerfd);
+        return 0;
+    } 
+    
+
+    //Arm the timer
+    if(timerfd_settime(timerfd, 0, &timer_value, NULL) < 0)
+    {
+        perror("Failed to arm event timer.");
+
+        if(epoll_fd)
+            epoll_ctl(epoll_fd, EPOLL_CTL_DEL, timerfd, NULL);
+        close(timerfd);
+
+        return 0;
+    }
+
+    return timerfd;
+}

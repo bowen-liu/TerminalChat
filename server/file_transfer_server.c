@@ -337,8 +337,6 @@ int new_client_transfer()
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
 
-    struct itimerspec timer_value;
-
     sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
@@ -372,26 +370,14 @@ int new_client_transfer()
     xferargs->timeout->event_type = EXPIRING_TRANSFER_REQ;
     xferargs->timeout->c = current_client;
 
-    xferargs->timeout->timerfd = timerfd_create(CLOCK_MONOTONIC, TFD_NONBLOCK);
-    if(xferargs->timeout->timerfd < 0)
+    //Create a timerfd to keep track of this transfer invite's expiry
+    xferargs->timeout->timerfd = create_timerfd(XFER_REQUEST_TIMEOUT, 0, timers_epollfd);
+    if(!xferargs->timeout->timerfd)
     {
-        perror("Failed to create a timerfd.");
+        free(xferargs);
         return 0;
     }
-
-    memset(&timer_value, 0, sizeof(struct itimerspec));
-    timer_value.it_value.tv_sec = XFER_REQUEST_TIMEOUT;
-
-    if(timerfd_settime(xferargs->timeout->timerfd, 0, &timer_value, NULL) < 0)
-    {
-        perror("Failed to arm event timer.");
-        return 0;
-    }
-
-    //Register the timer
     HASH_ADD_INT(timers, timerfd, xferargs->timeout);
-    if(!register_fd_with_epoll(timers_epollfd, xferargs->timeout->timerfd, EPOLLIN | EPOLLONESHOT))
-        return 0;   
 
     return 1;
 }
@@ -540,8 +526,9 @@ int client_data_forward_recver_ready()
         update_epoll_events(connections_epollfd, sender_xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
     }
 
-    printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
+    /*printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
             bytes_sent, xferargs->transferred, xferargs->filesize, xferargs->myself->username, xferargs->target->username);
+    */
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
@@ -594,8 +581,9 @@ int client_data_forward_sender_ready()
         xferargs->piece_transferred = 0;
     }
 
-    printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
+    /*printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
             bytes_sent, xferargs->transferred, xferargs->filesize, xferargs->myself->username, xferargs->target->username);
+    */
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);

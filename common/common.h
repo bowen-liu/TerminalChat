@@ -15,6 +15,7 @@
 
 #include <sys/epoll.h>
 #include <fcntl.h>
+#include <sys/timerfd.h>
 
 #include "../library/uthash/uthash.h"                //http://troydhanson.github.io/uthash/  
 #include "../library/uthash/utlist.h"                //http://troydhanson.github.io/uthash/utlist.html
@@ -34,7 +35,7 @@
 #define MAX_FILE_PATH           512 + MAX_FILENAME
 #define TRANSFER_TOKEN_SIZE     16
 #define CRC_INIT                0xffffffff
-#define XFER_REQUEST_TIMEOUT    30                                  //seconds
+#define XFER_REQUEST_TIMEOUT    600                                  //seconds
 
 
 enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};
@@ -52,6 +53,7 @@ int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 int update_epoll_events(int epoll_fd, int socketfd, int event_flags);
 int name_is_valid(char* username);
 Namelist* find_from_namelist(Namelist* list, char *name);
+int create_timerfd(int period_sec, int is_periodic, int epoll_fd);
 
 
 #endif

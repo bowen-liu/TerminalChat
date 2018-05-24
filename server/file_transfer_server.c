@@ -491,11 +491,13 @@ int user_cancelled_transfer()
 int client_data_forward_recver_ready()
 {
     FileXferArgs_Server *xferargs = current_client->file_transfers;
-    FileXferArgs_Server *sender_xferargs = current_client->file_transfers->target->c->file_transfers;
-
-    char *myname = xferargs->myself->username;
+    FileXferArgs_Server *sender_xferargs;
     int bytes, bytes_sent;
 
+    if(!xferargs)
+        return 0;
+    
+    sender_xferargs = current_client->file_transfers->target->c->file_transfers;
 
     //Nothing to send if the last piece has been completely forwarded
     if(sender_xferargs->piece_size == 0)
@@ -539,7 +541,7 @@ int client_data_forward_recver_ready()
     }
 
     printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
-            bytes_sent, xferargs->transferred, xferargs->filesize, myname, xferargs->target->username);
+            bytes_sent, xferargs->transferred, xferargs->filesize, xferargs->myself->username, xferargs->target->username);
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);
@@ -555,10 +557,13 @@ int client_data_forward_recver_ready()
 int client_data_forward_sender_ready()
 {
     FileXferArgs_Server *xferargs = current_client->file_transfers;
-    FileXferArgs_Server *recver_xferargs = current_client->file_transfers->target->c->file_transfers;
-
-    char *myname = xferargs->myself->username;
+    FileXferArgs_Server *recver_xferargs;
     int bytes, bytes_sent;
+
+    if(!xferargs)
+        return 0;
+
+    recver_xferargs = current_client->file_transfers->target->c->file_transfers;
     
     //Do not receive a new piece from the sender if the last piece hasn't been fully forwarded yet
     if(xferargs->piece_size > 0)
@@ -590,7 +595,7 @@ int client_data_forward_sender_ready()
     }
 
     printf("Forwarded %d bytes (%zu\\%zu) from \"%s\" to \"%s\".\n", 
-            bytes_sent, xferargs->transferred, xferargs->filesize, myname, xferargs->target->username);
+            bytes_sent, xferargs->transferred, xferargs->filesize, xferargs->myself->username, xferargs->target->username);
 
     if(xferargs->transferred == xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target->username);

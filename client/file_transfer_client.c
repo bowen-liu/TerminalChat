@@ -298,7 +298,7 @@ int file_send_next(FileXferArgs *args)
 
     args->transferred += bytes;
     printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
-    //sleep(1);
+    sleep(1);
 
     if(args->transferred < args->filesize)
         return bytes;

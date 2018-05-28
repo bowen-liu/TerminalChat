@@ -337,7 +337,7 @@ int register_send_transfer_connection()
     xferargs->myself =  myself_ret.user;
     xferargs->xfer_socketfd =  current_client->socketfd;
     xferargs->operation = SENDING_OP;
-    xferargs->piece_buffer = malloc(BUFSIZE);
+    xferargs->piece_buffer = malloc(XFER_BUFSIZE);
 
     if(target_ret.target_type == USER_TARGET)
     {
@@ -677,7 +677,7 @@ int client_data_forward_sender_ready()
         return 0;
 
     //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
-    bytes = recv_msg(current_client, xferargs->piece_buffer, BUFSIZE);
+    bytes = recv_msg(current_client, xferargs->piece_buffer, XFER_BUFSIZE);
     if(!bytes)
         return 0;
 

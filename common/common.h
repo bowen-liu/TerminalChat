@@ -26,7 +26,8 @@
 #define DEFAULT_SERVER_PORT     6996
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
-#define BUFSIZE                 4096                                //Buffer size used to hold a single received message or piece of data
+#define BUFSIZE                 4096                                //Buffer size used to hold a single received message
+#define XFER_BUFSIZE            1048576                             //Buffer size used to hold a piece of data during file transfer
 #define MAX_MSG_LENG            512                                 //Maximum size of messages can be entered by the user
 
 #define LONG_RECV_PAGE_SIZE     32                                  //For testing long send/recv

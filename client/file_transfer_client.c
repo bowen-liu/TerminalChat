@@ -163,15 +163,18 @@ void print_transfer_progress()
 /******************************/ 
 
 //Used by the sending client locally to parse its command into a FileXferArgs struct
-void parse_send_cmd_sender(char *buffer, FileXferArgs *args)
+void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group)
 {
     //You must fill args->socketfd before or after you call this function
 
     char *filename_start;
 
     memset(args, 0 ,sizeof(FileXferArgs));
-    sscanf(buffer, "!sendfile=%[^,],target=%s", 
-            args->target_file, args->target_name);
+
+    if(target_is_group)
+        sscanf(buffer, "!putfile=%[^,],target=%s", args->target_file, args->target_name);
+    else
+        sscanf(buffer, "!sendfile=%[^,],target=%s", args->target_file, args->target_name);
 
     //Extract the filename from the target file path
     filename_start = strrchr(args->target_file, '/');
@@ -190,13 +193,8 @@ void parse_accept_cmd(char *buffer, FileXferArgs *args)
             args->filename, &args->filesize, &args->checksum, args->target_name, args->token);
 }
 
-
-int new_send_cmd(FileXferArgs *args)
-{
-    char *filename_start;
-
-    args->operation = SENDING_OP;
-
+static int load_sending_file(FileXferArgs *args)
+{    
     //Attempt to open the file for reading (binary mode)
     args->file_fp = fopen(args->target_file, "rb");
     if(!args->file_fp)
@@ -229,6 +227,15 @@ int new_send_cmd(FileXferArgs *args)
 
     //Calculate the file's checksum (crc32)
     args->checksum = xcrc32(args->file_buffer, args->filesize, CRC_INIT);
+}
+
+
+int new_send_cmd(FileXferArgs *args)
+{
+    if(!load_sending_file(args))
+        return 0;
+
+    args->operation = SENDING_OP;
 
     //Rewrite the existing message in buffer with the de-localized filename
     sprintf(buffer, "!sendfile=%s,size=%zu,crc=%x,target=%s", 
@@ -388,61 +395,10 @@ int new_recv_cmd(FileXferArgs *args)
     int duplicate_files = 0;
     int retval;
     
-
-    //Make a receiving folder from the target user, if it does not exist
-    retval = mkdir(CLIENT_RECV_FOLDER, 0777);
-    if(retval < 0 && errno != EEXIST)
-    {
-        perror("Failed to create directory for receiving.");
-        return 0;
-    }
- 
-    sprintf(recvpath, "%s/%s", CLIENT_RECV_FOLDER, args->target_name);
-    retval = mkdir(recvpath, 0777);
-    if(retval < 0 && errno != EEXIST)
-    {
-        perror("Failed to create directory for receiving.");
-        return 0;
-    }
-
-    //Seperate the filename and extension
-    strcpy(filename, args->filename);
-    file_extension = strchr(filename, '.');
-    if(file_extension)
-    {
-        *file_extension = '\0';
-        ++file_extension;
-    }
-
-    //Check if there are any local files with the same filename already. If exists, append a number at the end.
-    sprintf(args->target_file, "%s/%s", recvpath, args->filename);
-    args->file_fp = fopen(args->target_file, "r");
-
-    while(args->file_fp)
-    {
-        fclose(args->file_fp);
-
-        sprintf(args->target_file, "%s/%s_%d", recvpath, filename, ++duplicate_files);
-        if(file_extension)
-        {
-            strcat(args->target_file, ".");
-            strcat(args->target_file, file_extension);
-        }
-
-        args->file_fp = fopen(args->target_file, "r");
-    }
-    printf("Created file \"%s\" for writing...\n", args->target_file);
-
-    //mmap write is currently broken for WSL. We'll just append the received data for now. 
     
-    //Create a target file for writing (binary mode)
-    args->file_fp = fopen(args->target_file, "ab");
-    if(!args->file_fp)
-    {
-        perror("Cannot create file for writing.");
+    if(!make_folder_and_file_for_writing(CLIENT_RECV_FOLDER, args->target_name, args->filename, args->target_file, &args->file_fp))
         return 0;
-    }
-    
+
     args->file_buffer = malloc(RECV_CHUNK_SIZE);
     args->operation = RECVING_OP;
 
@@ -592,4 +548,33 @@ int verify_received_file(FileXferArgs *args)
 
     printf("Received file \"%s\" is intact. Size: %zu, Checksum: %x\n", filepath, fileinfo.st_size, received_crc);
     return 1;
+}
+
+
+
+/******************************/
+/* Client-Group File Sharing */
+/******************************/ 
+
+int put_file_to_group(FileXferArgs *args)
+{
+    if(!load_sending_file(args))
+        return 0;
+
+    args->operation = SENDING_OP;
+
+    //Rewrite the existing message in buffer with the de-localized filename
+    sprintf(buffer, "!putfile=%s,size=%zu,crc=%x,target=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name);
+    printf("Initiating file put with group \"%s\" for file \"%s\" (%zu bytes, checksum: %x)\n", 
+            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
+    
+    //The new message in buffer will be sent automatically when this function returns back to client_main_loop()
+
+    return 1;
+}
+
+int get_file_from_group()
+{
+
 }

@@ -246,8 +246,25 @@ static int outgoing_file()
 
     file_transfers = calloc(1, sizeof(FileXferArgs));
 
-    parse_send_cmd_sender(buffer, file_transfers);
+    parse_send_cmd_sender(buffer, file_transfers, 0);
     if(!new_send_cmd(file_transfers))
+        return 0;
+
+    return 1;
+}
+
+static int outgoing_file_group()
+{
+    if(file_transfers)
+    {
+        printf("A pending file transfer already exist. Cannot continue...\n");
+        return 0;
+    }
+
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+
+    parse_send_cmd_sender(buffer, file_transfers, 1);
+    if(!put_file_to_group(file_transfers))
         return 0;
 
     return 1;
@@ -318,6 +335,8 @@ static int cancel_ongoing_file_transfer()
 }
 
 
+
+
 static int handle_user_command()
 {
     //Return 0 if you don't want the command to be forwarded
@@ -342,8 +361,9 @@ static int handle_user_command()
 
     else if(strncmp("!cancelfile", buffer, 11) == 0)
         return cancel_ongoing_file_transfer();
-        
 
+    else if(strncmp("!putfile=", buffer, 9) == 0)   
+        return outgoing_file_group();
 
     return 1;
 }

@@ -521,6 +521,9 @@ static inline int parse_client_command()
     else if(strncmp(buffer, "!cancelfile", 11) == 0)
         return user_cancelled_transfer();
 
+    /*File Transfer for Groups*/
+    else if(strncmp(buffer, "!putfile=", 9) == 0)
+        return put_new_file_to_group();
     
     else
     {

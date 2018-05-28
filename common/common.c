@@ -1,5 +1,5 @@
 #include "common.h"
-#include <string.h>
+#include <sys/stat.h>
 
 
 int hostname_to_ip(const char* hostname, const char* port, char* ip_return)
@@ -171,4 +171,71 @@ int create_timerfd(int period_sec, int is_periodic, int epoll_fd)
     }
 
     return timerfd;
+}
+
+
+int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *filename, char* target_file_ret, FILE **file_fp_ret)
+{
+    char recvpath[FILENAME_MAX+1];
+    char filename_only[FILENAME_MAX+1];
+    char *file_extension;
+
+    int duplicate_files = 0;
+    int retval;
+    
+    //Make a receiving folder from the target user, if it does not exist
+    retval = mkdir(root_dir, 0666);
+    if(retval < 0 && errno != EEXIST)
+    {
+        perror("Failed to create directory for receiving.");
+        return 0;
+    }
+ 
+    sprintf(recvpath, "%s/%s", root_dir, target_name);
+    retval = mkdir(recvpath, 0666);
+    if(retval < 0 && errno != EEXIST)
+    {
+        perror("Failed to create directory for receiving.");
+        return 0;
+    }
+
+    //Seperate the filename and extension
+    strcpy(filename_only, filename);
+    file_extension = strchr(filename_only, '.');
+    if(file_extension)
+    {
+        *file_extension = '\0';
+        ++file_extension;
+    }
+
+    //Check if there are any local files with the same filename already. If exists, append a number at the end.
+    sprintf(target_file_ret, "%s/%s", recvpath, filename);
+    *file_fp_ret = fopen(target_file_ret, "r");
+
+    while(*file_fp_ret)
+    {
+        fclose(*file_fp_ret);
+
+        sprintf(target_file_ret, "%s/%s_%d", recvpath, filename_only, ++duplicate_files);
+        if(file_extension)
+        {
+            strcat(target_file_ret, ".");
+            strcat(target_file_ret, file_extension);
+        }
+
+        *file_fp_ret = fopen(target_file_ret, "r");
+    }
+    printf("Created file \"%s\" for writing...\n", target_file_ret);
+
+    //mmap write is currently broken for WSL. We'll just append the received data for now. 
+    
+    //Create a target file for writing (binary mode)
+    *file_fp_ret = fopen(target_file_ret, "ab");
+    if(!*file_fp_ret)
+    {
+        perror("Cannot create file for writing.");
+        return 0;
+    }
+
+    return 1;
 }

@@ -4,29 +4,51 @@
 #include "server_common.h"
 #include "group.h"
 
-#define SERVER_TEMP_STORAGE "file_xfer_tmp"
+#define GROUP_XFER_ROOT     "GROUP_FILES"
+
+enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
+
+typedef struct {
+    enum sendrecv_target target_type;
+    
+    union{
+        User *user;
+        Group *group;
+    };
+
+} XferTarget;
 
 
 typedef struct filexferargs_server {
 
+    //Myself
     int xfer_socketfd;
     enum sendrecv_op operation;
     User *myself;
-    User *target;
 
+    //Target
+    enum sendrecv_target target_type;
+    union{
+        User *target_user;
+        Group *target_group;
+    };
+
+    //File info
     char filename[MAX_FILENAME];
     size_t filesize;
     size_t transferred;
     unsigned int checksum;
     char token[TRANSFER_TOKEN_SIZE+1];
     
+    //Used by SENDERs only
     TimerEvent *timeout;
-
-    //Used by SENDERs only to deal with partial sends
     unsigned char* piece_buffer;
     size_t piece_size;
     size_t piece_transferred;
-    unsigned int next_piece_ready :1;
+
+    //Used when users are putting files in a group
+    char target_file[MAX_FILE_PATH+1];
+    FILE *file_fp;
 
 } FileXferArgs_Server;
 
@@ -47,6 +69,9 @@ int user_cancelled_transfer();
 
 int client_data_forward_recver_ready();
 int client_data_forward_sender_ready();
+
+int put_new_file_to_group();
+int get_new_file_from_group();
 
 
 #endif

@@ -54,4 +54,5 @@ dkms.conf
 bak/
 SENDFILES/
 files_received/
+GROUP_FILES/
 test.txt

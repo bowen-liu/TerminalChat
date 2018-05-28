@@ -13,6 +13,7 @@
 #include <netdb.h>
 #include <arpa/inet.h> 
 
+#include <errno.h>
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <sys/timerfd.h>
@@ -40,7 +41,6 @@
 
 enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};
 
-
 typedef struct namelist {
     char name[USERNAME_LENG+1];
     struct namelist *next;
@@ -54,6 +54,7 @@ int update_epoll_events(int epoll_fd, int socketfd, int event_flags);
 int name_is_valid(char* username);
 Namelist* find_from_namelist(Namelist* list, char *name);
 int create_timerfd(int period_sec, int is_periodic, int epoll_fd);
+int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *filename, char* target_file_ret, FILE **file_fp_ret);
 
 
 #endif

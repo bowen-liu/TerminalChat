@@ -59,7 +59,7 @@ void print_transfer_progress();
 
 
 /*Sending*/
-void parse_send_cmd_sender(char *buffer, FileXferArgs *args);
+void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group);
 int new_send_cmd(FileXferArgs *args);
 int recver_accepted_file(char* buffer);
 int file_send_next(FileXferArgs *args);
@@ -70,5 +70,9 @@ void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo);
 void parse_accept_cmd(char *buffer, FileXferArgs *args);
 int new_recv_cmd(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args);
+
+/*Group Send/Recv*/
+int put_file_to_group(FileXferArgs *args);
+int get_file_from_group();
 
 #endif

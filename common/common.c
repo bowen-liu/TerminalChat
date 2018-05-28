@@ -239,3 +239,51 @@ int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *fi
 
     return 1;
 }
+
+
+int verify_received_file(size_t expected_size, unsigned int expected_crc, char* filepath)
+{
+    int filefd;
+    struct stat fileinfo;
+    char *filemap;
+    unsigned int received_crc;
+
+    //Open the received file for reading
+    filefd = open(filepath, O_RDONLY);
+    if(!filefd)
+    {
+        perror("Failed to open received file for verification.");
+        return 0;
+    }
+
+    //Verify the received file's size
+    fstat(filefd, &fileinfo);
+    if(fileinfo.st_size != expected_size)
+    {
+        printf("Mismatched file size. Expected: %zu, Received: %zu\n", expected_size, fileinfo.st_size);
+        close(filefd);
+        return 0;
+    }
+
+    //Map the received file into memory and verify its checksum
+    filemap = mmap(NULL, fileinfo.st_size, PROT_READ, MAP_SHARED, filefd, 0);
+    if(!filemap)
+    {
+        perror("Failed to map received file in memory for verification.");
+        close(filefd);
+        return 0;
+    }
+
+    received_crc = xcrc32(filemap, fileinfo.st_size, CRC_INIT);
+    close(filefd);
+    munmap((void*)filemap, fileinfo.st_size);
+
+    if(received_crc != expected_crc)
+    {
+        printf("Mismatched checksum. Expected: %x, Received: %x\n", expected_crc, received_crc);
+        return 0;
+    }
+
+    printf("Received file \"%s\" is intact. Size: %zu, Checksum: %x\n", filepath, fileinfo.st_size, received_crc);
+    return 1;
+}

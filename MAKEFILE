@@ -38,4 +38,5 @@ main: server.o client.o
 clean:
 	rm -f *.o a.out
 	rm -rf files_received
+	rm -rf GROUP_FILES
 

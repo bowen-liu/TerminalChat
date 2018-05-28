@@ -4,7 +4,6 @@
 #include <unistd.h>
 #include <sys/stat.h>
 #include <sys/types.h>
-#include <sys/mman.h>
 #include <fcntl.h>
 #include <errno.h>
 
@@ -13,9 +12,6 @@
 /******************************/
 /*           Helpers          */
 /******************************/ 
-
-//Defined in library/crc32/crc32.c
-extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);
 
 int path_is_file(const char *path)
 {
@@ -456,7 +452,6 @@ int new_recv_cmd(FileXferArgs *args)
 }
 
 
-int verify_received_file(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args)
 {
     size_t remaining_size = args->filesize - args->transferred;
@@ -490,65 +485,12 @@ int file_recv_next(FileXferArgs *args)
     printf("Completed file transfer!\n");
     
     //Verify file integrity, and then cleanup and close the transfer connection
-    verify_received_file(args);
+    verify_received_file(args->filesize, args->checksum, args->target_file);
+    cancel_transfer(args);
     return bytes;
 }
 
-int verify_received_file(FileXferArgs *args)
-{
-    char filepath[MAX_FILE_PATH+1];
-    unsigned int expected_crc, received_crc;
-    size_t expected_size;
 
-    int filefd;
-    struct stat fileinfo;
-    char *filemap;
-
-    //Record the information we need, and then close/free the transfer connection
-    expected_size = args->filesize;
-    expected_crc = args->checksum;
-    strcpy(filepath, args->target_file);
-    cancel_transfer(args);
-
-    //Open the received file for reading
-    filefd = open(filepath, O_RDONLY);
-    if(!filefd)
-    {
-        perror("Failed to open received file for verification.");
-        return 0;
-    }
-
-    //Verify the received file's size
-    fstat(filefd, &fileinfo);
-    if(fileinfo.st_size != expected_size)
-    {
-        printf("Mismatched file size. Expected: %zu, Received: %zu\n", expected_size, fileinfo.st_size);
-        close(filefd);
-        return 0;
-    }
-
-    //Map the received file into memory and verify its checksum
-    filemap = mmap(NULL, fileinfo.st_size, PROT_READ, MAP_SHARED, filefd, 0);
-    if(!filemap)
-    {
-        perror("Failed to map received file in memory for verification.");
-        close(filefd);
-        return 0;
-    }
-
-    received_crc = xcrc32(filemap, fileinfo.st_size, CRC_INIT);
-    close(filefd);
-    munmap((void*)filemap, args->filesize);
-
-    if(received_crc != expected_crc)
-    {
-        printf("Mismatched checksum. Expected: %x, Received: %x\n", expected_crc, received_crc);
-        return 0;
-    }
-
-    printf("Received file \"%s\" is intact. Size: %zu, Checksum: %x\n", filepath, fileinfo.st_size, received_crc);
-    return 1;
-}
 
 
 

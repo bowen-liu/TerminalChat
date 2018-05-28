@@ -17,6 +17,7 @@
 #include <sys/epoll.h>
 #include <fcntl.h>
 #include <sys/timerfd.h>
+#include <sys/mman.h>
 
 #include "../library/uthash/uthash.h"                //http://troydhanson.github.io/uthash/  
 #include "../library/uthash/utlist.h"                //http://troydhanson.github.io/uthash/utlist.html
@@ -47,6 +48,8 @@ typedef struct namelist {
 } Namelist;
 
 
+extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);          //Defined in library/crc32/crc32.c
+
 int hostname_to_ip(const char* hostname, const char* port, char* ip_return);
 void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
@@ -55,6 +58,7 @@ int name_is_valid(char* username);
 Namelist* find_from_namelist(Namelist* list, char *name);
 int create_timerfd(int period_sec, int is_periodic, int epoll_fd);
 int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *filename, char* target_file_ret, FILE **file_fp_ret);
+int verify_received_file(size_t expected_size, unsigned int expected_crc, char* filepath);
 
 
 #endif

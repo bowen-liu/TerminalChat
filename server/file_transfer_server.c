@@ -209,8 +209,7 @@ void cleanup_transfer_connection(Client *c)
             (xferargs->operation == SENDING_OP)? "SEND":"RECV", xferargs->myself->username);
     
     xferargs->myself->c->file_transfers = NULL;                 //Also remove the transfer args at my main connection          
-    target_xferargs = xferargs->target_user->c->file_transfers;
-
+    
     kill_connection(c->socketfd);
     
     if(xferargs->piece_buffer)
@@ -219,6 +218,15 @@ void cleanup_transfer_connection(Client *c)
     if(xferargs->file_fp)
         fclose(xferargs->file_fp);
     
+    if(xferargs->target_type == GROUP_TARGET)
+    {
+        //Anything else needs to be done, if the target is a group?
+        free(xferargs);
+        return;
+    }
+    
+
+    target_xferargs = xferargs->target_user->c->file_transfers;
     free(xferargs);
     c->file_transfers = NULL;
 
@@ -644,7 +652,7 @@ int client_data_forward_recver_ready()
         update_epoll_events(connections_epollfd, sender_xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
     }
 
-    if(xferargs->transferred == xferargs->filesize)
+    if(xferargs->transferred >= xferargs->filesize)
         printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target_user->username);
 
     //Rearm epoll notifications for receiver (to receive the next chunk/piece, or to close the connection when complete)
@@ -664,8 +672,6 @@ int client_data_forward_sender_ready()
     if(!xferargs)
         return 0;
 
-    recver_xferargs = current_client->file_transfers->target_user->c->file_transfers;
-    
     //Do not receive a new piece from the sender if the last piece hasn't been fully forwarded yet
     if(xferargs->piece_size > 0)
         return 0;
@@ -682,15 +688,28 @@ int client_data_forward_sender_ready()
         {
             perror("Failed to write correct number of bytes to receiving file.");
         }
+
+        xferargs->transferred += bytes;
+        if(xferargs->transferred >= xferargs->filesize)
+        {
+            verify_received_file(xferargs->filesize, xferargs->checksum, xferargs->target_file);
+            disconnect_client(current_client);
+            return bytes;
+        }
+
+        //Rearm epoll notifications for sender (to send the next piece)
+        update_epoll_events(connections_epollfd, xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
     }
+
+    //If the receiver is a user, rearm the receiver's epoll events and forward the piece to the receiver when ready
     else
     {
-        //Rearm epoll notifications for receiver, and forward the piece to the receiver when ready
         xferargs->piece_size = bytes;
+        recver_xferargs = current_client->file_transfers->target_user->c->file_transfers;
         update_epoll_events(connections_epollfd, recver_xferargs->xfer_socketfd, XFER_RECVER_EPOLL_EVENTS);
     }
 
-   return 1;
+   return bytes;
 }
 
 

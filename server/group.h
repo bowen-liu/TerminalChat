@@ -14,7 +14,20 @@
 
 /*Data structures*/
 
-//Should be castable to a User instead
+typedef struct {
+
+    unsigned int fileid;
+    char uploader[USERNAME_LENG+1];
+    char filename[MAX_FILENAME+1];
+    size_t filesize;
+    unsigned int checksum;
+    char target_file[MAX_FILE_PATH+1];
+
+    UT_hash_handle hh;
+
+} File_List;
+
+
 typedef struct {
     char username[USERNAME_LENG+1];
     Client *c;
@@ -23,11 +36,15 @@ typedef struct {
     int permissions;
 } Group_Member;
 
+
 typedef struct group {
     char groupname[USERNAME_LENG+1];
     Group_Member *members;
     unsigned int member_count;
-    //unsigned int invite_only : 1;
+    
+    //For group file sharing
+    unsigned int last_fileid;
+    File_List *filelist;
 
     UT_hash_handle hh;
 } Group;
@@ -45,5 +62,7 @@ int join_group();
 int invite_to_group();
 int kick_from_group();
 int change_group_member_permission(Group *group, User *user, int new_permissions);
+
+int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file);
 
 #endif

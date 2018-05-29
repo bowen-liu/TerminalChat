@@ -600,6 +600,28 @@ static int begin_file_sending()
 }
 
 
+static int incoming_group_file()
+{
+    if(file_transfers)
+    {
+        printf("Already have ongoing file transfers...\n");
+        return 0;
+    }
+
+    file_transfers = calloc(1,sizeof(FileXferArgs)); 
+    sscanf(buffer, "!getfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            file_transfers->filename, &file_transfers->filesize, &file_transfers->checksum, file_transfers->target_name, file_transfers->token);    
+
+    printf("File \"%s\" (%zu bytes, crc: %x, token: %s) from group \"%s\" is ready for download.\n", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->token, file_transfers->target_name);
+
+    //Directly open a new connection to accept the file
+    new_recv_connection(file_transfers);
+
+    return 0;
+}
+
+
 
 static void parse_control_message(char* cmd_buffer)
 {
@@ -647,7 +669,10 @@ static void parse_control_message(char* cmd_buffer)
         rejected_file_sending();
     
     else if(strncmp("!cancelfile=", buffer, 12) == 0)
-        return file_transfer_cancelled();
+        file_transfer_cancelled();
+
+    else if(strncmp("!getfile=", buffer, 9) == 0)
+        incoming_group_file();
 
 
     else

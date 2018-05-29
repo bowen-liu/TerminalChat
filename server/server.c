@@ -524,6 +524,10 @@ static inline int parse_client_command()
     /*File Transfer for Groups*/
     else if(strncmp(buffer, "!putfile=", 9) == 0)
         return put_new_file_to_group();
+
+    else if(strncmp(buffer, "!getfile=", 9) == 0)
+        return get_new_file_from_group();
+    
     
     else
     {

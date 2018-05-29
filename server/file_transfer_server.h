@@ -6,7 +6,6 @@
 
 #define GROUP_XFER_ROOT     "GROUP_FILES"
 
-enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
 
 typedef struct {
     enum sendrecv_target target_type;
@@ -34,7 +33,7 @@ typedef struct filexferargs_server {
     };
 
     //File info
-    char filename[MAX_FILENAME];
+    char filename[MAX_FILENAME+1];
     size_t filesize;
     size_t transferred;
     unsigned int checksum;
@@ -46,9 +45,10 @@ typedef struct filexferargs_server {
     size_t piece_size;
     size_t piece_transferred;
 
-    //Used when users are putting files in a group
+    //For group-related transfers
     char target_file[MAX_FILE_PATH+1];
     FILE *file_fp;
+    char *file_buffer;
 
 } FileXferArgs_Server;
 

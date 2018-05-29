@@ -41,6 +41,8 @@ typedef struct {
 typedef struct fileinfo{
 
     char target_name[USERNAME_LENG+1];
+    enum sendrecv_target target_type;
+
     char filename[MAX_FILENAME+1];
     size_t filesize;
     unsigned int checksum;
@@ -69,6 +71,7 @@ int file_send_next(FileXferArgs *args);
 void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo);
 void parse_accept_cmd(char *buffer, FileXferArgs *args);
 int new_recv_cmd(FileXferArgs *args);
+int new_recv_connection(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args);
 
 /*Group Send/Recv*/

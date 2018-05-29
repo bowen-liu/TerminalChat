@@ -119,8 +119,8 @@ static int validate_transfer_target (FileXferArgs_Server *request, char* request
     /************************************************************/
 
     HASH_FIND_STR(active_users, target_username, target_user);
-    /*if(!target_user)
-        HASH_FIND_STR(groups, target_username, target_group);*/
+    if(!target_user)
+        HASH_FIND_STR(groups, target_username, target_group);
 
     if(target_user)
     {
@@ -176,9 +176,23 @@ static int validate_transfer(FileXferArgs_Server *request, char* request_usernam
     if(!retval)
         return 0;
 
+    if(requester_ret->target_type == USER_TARGET)
+        printf("Requester is user: %s\n", requester_ret->user->username);
+    else if(requester_ret->target_type == USER_TARGET)
+        printf("Requester is group: %s\n", requester_ret->group->groupname);
+    else
+        printf("Requester is unknown?\n");
+
     retval = validate_transfer_target(request, request_username, target_username, requester_ret, target_ret);
     if(!retval)
         return 0;
+
+    if(target_ret->target_type == USER_TARGET)
+        printf("Target is user: %s\n", target_ret->user->username);
+    else if(target_ret->target_type == USER_TARGET)
+        printf("Target is group: %s\n", target_ret->group->groupname);
+    else
+        printf("Target is unknown?\n");
     
     return 1;
 }
@@ -426,9 +440,6 @@ int register_recv_transfer_connection()
     current_client->connection_type = TRANSFER_CONNECTION;
     current_client->file_transfers = xferargs;
 
-    current_client->connection_type = TRANSFER_CONNECTION;
-    current_client->file_transfers = xferargs;
-
     sprintf(buffer, "Accepted");
     send_msg(current_client, buffer, strlen(buffer)+1);
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
@@ -599,14 +610,19 @@ int user_cancelled_transfer()
 /* FORWARDING FILE PIECES */
 
 //The receiver is ready for receiving the next piece (EPOLLOUT received)
+static int group_send_next_piece();
 int client_data_forward_recver_ready()
 {
     FileXferArgs_Server *xferargs = current_client->file_transfers;
     FileXferArgs_Server *sender_xferargs;
-    int bytes, bytes_sent;
+    size_t bytes_remaining;
+    int bytes_sent;
 
     if(!xferargs)
         return 0;
+
+    if(xferargs->target_type == GROUP_TARGET)
+        return group_send_next_piece();
     
     sender_xferargs = current_client->file_transfers->target_user->c->file_transfers;
 
@@ -619,22 +635,19 @@ int client_data_forward_recver_ready()
         return 0;
     }
        
-
-    //printf("Piece size: %zu, piece transferred %zu\n", sender_xferargs->piece_size, sender_xferargs->piece_transferred);
-    bytes = sender_xferargs->piece_size - sender_xferargs->piece_transferred;
-    if(bytes <= 0)
+    bytes_remaining = sender_xferargs->piece_size - sender_xferargs->piece_transferred;
+    if(bytes_remaining <= 0)
     {
         sender_xferargs->piece_size = 0;
         sender_xferargs->piece_transferred = 0;
         return 0;
     }
 
-    bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes);
-    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes)? bytes:LONG_RECV_PAGE_SIZE);
+    bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes_remaining);
+    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
     if(bytes_sent < 0)
     {
-        //if(errno != EAGAIN)
-            perror("Failed to send the current piece");
+        perror("Failed to send the current piece");
         return -1;
     }
 
@@ -667,34 +680,36 @@ int client_data_forward_sender_ready()
 {
     FileXferArgs_Server *xferargs = current_client->file_transfers;
     FileXferArgs_Server *recver_xferargs;
-    int bytes, bytes_sent;
-
-    if(!xferargs)
-        return 0;
+    int bytes_recvd;
 
     //Do not receive a new piece from the sender if the last piece hasn't been fully forwarded yet
-    if(xferargs->piece_size > 0)
+    if(!xferargs || xferargs->piece_size > 0)
         return 0;
 
     //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
-    bytes = recv_msg(current_client, xferargs->piece_buffer, XFER_BUFSIZE);
-    if(!bytes)
+    bytes_recvd = recv_msg(current_client, xferargs->piece_buffer, XFER_BUFSIZE);
+    if(!bytes_recvd)
         return 0;
 
     //If the target is intended for a group, we'll save the filepiece.
     if(xferargs->target_type == GROUP_TARGET)
     {
-        if(write(fileno(xferargs->file_fp), xferargs->piece_buffer, bytes) != bytes)
+        if(write(fileno(xferargs->file_fp), xferargs->piece_buffer, bytes_recvd) != bytes_recvd)
         {
             perror("Failed to write correct number of bytes to receiving file.");
         }
 
-        xferargs->transferred += bytes;
+        xferargs->transferred += bytes_recvd;
         if(xferargs->transferred >= xferargs->filesize)
         {
-            verify_received_file(xferargs->filesize, xferargs->checksum, xferargs->target_file);
+            if(verify_received_file(xferargs->filesize, xferargs->checksum, xferargs->target_file))
+            {
+                printf("Group: %s\n", xferargs->target_group->groupname);
+                add_file_to_group(xferargs->target_group, xferargs->myself->username, xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_file);
+            }
+
             disconnect_client(current_client);
-            return bytes;
+            return bytes_recvd;
         }
 
         //Rearm epoll notifications for sender (to send the next piece)
@@ -704,12 +719,12 @@ int client_data_forward_sender_ready()
     //If the receiver is a user, rearm the receiver's epoll events and forward the piece to the receiver when ready
     else
     {
-        xferargs->piece_size = bytes;
+        xferargs->piece_size = bytes_recvd;
         recver_xferargs = current_client->file_transfers->target_user->c->file_transfers;
         update_epoll_events(connections_epollfd, recver_xferargs->xfer_socketfd, XFER_RECVER_EPOLL_EVENTS);
     }
 
-   return bytes;
+   return bytes_recvd;
 }
 
 
@@ -718,16 +733,31 @@ int client_data_forward_sender_ready()
 /* Client-Group File Sharing */
 /******************************/ 
 
-
-int put_new_file_to_group()
+FileXferArgs_Server* parse_group_fileop_cmd(int put_or_get)
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
     Group_Member *is_member;
 
-    sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
-            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
+    //for getfile
+    File_List *requested_file;
+    unsigned int requested_fileid;
 
+    //Parse the command's parameters
+    if(put_or_get > 0)
+    {
+        sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
+                xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
+        xferargs->operation = SENDING_OP;
+    }   
+    else
+    {
+        sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
+        xferargs->operation = RECVING_OP;
+    }
+
+    xferargs->target_type = GROUP_TARGET; 
+    
     //Find the target group specified
     HASH_FIND_STR(groups, target_name, xferargs->target_group);
     if(!xferargs->target_group)
@@ -735,7 +765,7 @@ int put_new_file_to_group()
         printf("Group \"%s\" not found\n", target_name);
         free(xferargs);
         send_msg(current_client, "UserNotFound", 13);
-        return 0;
+        return NULL;
     }
 
     //Check if the requesting user is a member
@@ -745,15 +775,42 @@ int put_new_file_to_group()
         printf("User \"%s\" is not part of the group \"%s\". No permission.\n", current_client->username, xferargs->target_group->groupname);
         free(xferargs);
         send_msg(current_client, "NoPermission", 13);
-        return 0;
+        return NULL;
     }
+    
+    //GETFILE op: Find the associated file's information by the fileid
+    if(put_or_get <= 0)
+    {
+        HASH_FIND_INT(xferargs->target_group->filelist, &requested_fileid, requested_file);
+        if(!requested_file)
+        {
+            printf("Could not find a file associated with fileid %u in group \"%s\"\n", requested_fileid, xferargs->target_group->groupname);
+            free(xferargs);
+            send_msg(current_client, "WrongInfo", 10);
+            return NULL;
+        }
 
-    current_client->file_transfers = xferargs;
-    xferargs->operation = SENDING_OP;
-    xferargs->target_type = GROUP_TARGET;
+        strcpy(xferargs->target_file, requested_file->target_file);
+        strcpy(xferargs->filename, requested_file->filename);
+        xferargs->filesize = requested_file->filesize;
+        xferargs->checksum = requested_file->checksum;
+    }
 
     //Generate an unique token for this transfer
     generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
+
+    return xferargs;
+}
+
+
+int put_new_file_to_group()
+{
+    FileXferArgs_Server *xferargs = parse_group_fileop_cmd(1);
+    
+    if(!xferargs)
+        return 0;
+    
+    current_client->file_transfers = xferargs;
 
     //Send out a notification to the group
     sprintf(buffer, "User \"%s\" is uploading a file \"%s\" (%zu bytes, crc: %x) to the group \"%s\"...", 
@@ -761,19 +818,71 @@ int put_new_file_to_group()
     printf("%s\n", buffer);
     send_group(xferargs->target_group, buffer, strlen(buffer)+1);
 
-
     //Accept the file
     if(!make_folder_and_file_for_writing(GROUP_XFER_ROOT, xferargs->target_group->groupname, xferargs->filename, xferargs->target_file, &xferargs->file_fp))
         return 0;
 
     sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-        xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
-    send_msg(current_client, buffer, strlen(buffer)+1);
-
-    return 1;
+            xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
+    
+    return send_msg(current_client, buffer, strlen(buffer)+1);
 }
+
 
 int get_new_file_from_group()
 {
+    FileXferArgs_Server *xferargs = parse_group_fileop_cmd(0);
+    
+    if(!xferargs)
+        return 0;
+    
+    current_client->file_transfers = xferargs;
 
+    //Open the target file for reading
+    xferargs->file_fp = fopen(xferargs->target_file, "rb");
+    if(!xferargs->file_fp)
+    {
+        perror("Failed to open file for sending.");
+        return 0;
+    }
+    
+    //Open the file with mmap for reading
+    xferargs->file_buffer = mmap(NULL, xferargs->filesize, PROT_READ, MAP_SHARED, fileno(xferargs->file_fp), 0);
+    if(xferargs->file_buffer == MAP_FAILED)
+    {
+        perror("Failed to map sending file to memory.");
+        fclose(xferargs->file_fp);
+        return 0;
+    }
+
+    sprintf(buffer, "!getfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+        xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
+    
+    return send_msg(current_client, buffer, strlen(buffer)+1);
+}
+
+//For ongoing getfile operations
+static int group_send_next_piece()
+{
+    FileXferArgs_Server *xferargs = current_client->file_transfers;
+    size_t bytes_remaining = xferargs->filesize - xferargs->transferred;
+    int bytes_sent;
+    
+    bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], bytes_remaining);
+    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
+    if(bytes_sent < 0)
+    {
+        perror("Failed to send the current piece");
+        return -1;
+    }
+
+    printf("Sent %d bytes\n", bytes_sent);
+
+    xferargs->transferred += bytes_sent;
+    if(xferargs->transferred >= xferargs->filesize)
+        printf("All bytes for file transfer has been forwarded. Waiting for receiver \"%s\" to close the connection...\n", xferargs->target_user->username);
+
+    //Rearm epoll notifications for receiver (to receive the next chunk/piece, or to close the connection when complete)
+    update_epoll_events(connections_epollfd, current_client->socketfd, XFER_RECVER_EPOLL_EVENTS);
+    return 1;
 }

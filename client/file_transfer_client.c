@@ -340,7 +340,7 @@ int file_send_next(FileXferArgs *args)
 
     if(bytes <= 0)
     {
-        perror("Failed to send long message");
+        perror("Failed to send file piece");
         printf("Sent %zu\\%zu bytes to target \"%s\" before failure.\n", args->transferred, args->filesize, args->target_name);
         cancel_transfer(args);
         return 0;
@@ -378,10 +378,13 @@ void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
     sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
             fileinfo->filename, &fileinfo->filesize, &fileinfo->checksum, fileinfo->target_name, fileinfo->token);
 
+    fileinfo->target_type = USER_TARGET;
+
     //You must now fill args->socketfd yourself after calling this function, if you choose to accept the file afterwards
 }
 
 
+int new_recv_connection(FileXferArgs *args);
 int new_recv_cmd(FileXferArgs *args)
 {
     char recvpath[FILENAME_MAX+1];
@@ -391,12 +394,6 @@ int new_recv_cmd(FileXferArgs *args)
     int duplicate_files = 0;
     int retval;
     
-    
-    if(!make_folder_and_file_for_writing(CLIENT_RECV_FOLDER, args->target_name, args->filename, args->target_file, &args->file_fp))
-        return 0;
-
-    args->file_buffer = malloc(RECV_CHUNK_SIZE);
-    args->operation = RECVING_OP;
 
     //Tell the server I am accepting this file
     sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
@@ -409,6 +406,18 @@ int new_recv_cmd(FileXferArgs *args)
     /* Open new connection to server for file transferring */
     /*******************************************************/
 
+    return new_recv_connection(args);
+}
+
+
+int new_recv_connection(FileXferArgs *args)
+{
+    if(!make_folder_and_file_for_writing(CLIENT_RECV_FOLDER, args->target_name, args->filename, args->target_file, &args->file_fp))
+        return 0;
+
+    args->file_buffer = malloc(RECV_CHUNK_SIZE);
+    args->operation = RECVING_OP;
+    
     if(!new_transfer_connection(args))
     {
         cancel_transfer(args);
@@ -461,7 +470,7 @@ int file_recv_next(FileXferArgs *args)
 
     if(bytes <= 0)
     {
-        perror("Failed to receive long message from server.");
+        perror("Failed to receive file piece from server.");
         printf("%zu\\%zu bytes received before failure.\n", args->transferred, args->filesize);
         cancel_transfer(args);
         return 0;

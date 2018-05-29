@@ -590,3 +590,27 @@ int change_group_member_permission(Group *group, User *user, int new_permissions
 {
     return 0;
 }
+
+
+int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file)
+{
+    File_List *new_file = calloc(1, sizeof(File_List));
+    char new_file_msg[MAX_MSG_LENG];
+
+    strcpy(new_file->uploader, uploader);
+    strcpy(new_file->filename, filename);
+    strcpy(new_file->target_file, target_file);
+    new_file->filesize = filesize;
+    new_file->checksum = checksum;
+    new_file->fileid = ++group->last_fileid;
+
+    HASH_ADD_INT(group->filelist, fileid, new_file);
+
+    //TODO: Expiry timer
+
+    sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\". \n", 
+                new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);
+
+    send_group(group, new_file_msg, strlen(new_file_msg)+1);
+    return new_file->fileid;
+}

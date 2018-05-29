@@ -42,6 +42,8 @@
 
 
 enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};
+enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
+
 
 typedef struct namelist {
     char name[USERNAME_LENG+1];

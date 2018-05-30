@@ -223,6 +223,8 @@ static int load_sending_file(FileXferArgs *args)
 
     //Calculate the file's checksum (crc32)
     args->checksum = xcrc32(args->file_buffer, args->filesize, CRC_INIT);
+
+    return 1;
 }
 
 
@@ -395,7 +397,7 @@ int new_recv_connection(FileXferArgs *args)
     args->file_buffer = malloc(RECV_CHUNK_SIZE);
     args->operation = RECVING_OP;
     
-    
+
     /*******************************************************/
     /* Open new connection to server for file transferring */
     /*******************************************************/
@@ -509,5 +511,5 @@ int put_file_to_group(FileXferArgs *args)
 
 int get_file_from_group()
 {
-
+    return 1;
 }

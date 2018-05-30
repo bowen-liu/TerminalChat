@@ -105,7 +105,7 @@ static inline unsigned int recv_msg(char* buffer, size_t size)
 static void parse_control_message(char* buffer);
 static void recv_long_msg()
 {
-    int bytes, i;
+    int bytes;
     char header[48];
     char *longcmd;
 
@@ -171,8 +171,7 @@ static void recv_long_msg()
 /******************************/
 
 static int register_with_server()
-{
-    int bytes;
+{   
     
     //Receive a greeting message from the server
     if(!recv_msg(buffer, BUFSIZE))
@@ -425,7 +424,6 @@ static void group_invited()
 static void group_joined()
 {
     Namelist *groupname = malloc(sizeof(Namelist));
-    char invite_sender[USERNAME_LENG+1];
 
     sscanf(buffer, "!groupjoined=%s", groupname->name);
     printf("You have joined the group \"%s\".\n", groupname->name);
@@ -605,6 +603,91 @@ static int begin_file_sending()
     return recver_accepted_file(buffer);
 }
 
+static int parse_filelist()
+{
+    char group_name[USERNAME_LENG+1];
+    unsigned int file_count;
+    char* newbuffer = buffer;
+
+    char* token;
+    int token_len;
+
+    enum parse_states {START_FILEID = 0, FILENAME, FILESIZE, UPLOADER_END} parse_state;
+
+    //Parse the header
+    token = strtok(newbuffer, ",");
+    if(!token)
+        return 0;
+    sscanf(token, "!filelist=%u", &file_count);
+
+    //Is the following token the name of a group?
+    token = strtok(NULL, ",");
+    if(!token)
+        return 0;
+
+    //This is a group userlist
+    if(strncmp(token, "group=", 6) == 0)
+    {
+        sscanf(token, "group=%[^,]", group_name);
+        printf("%u files are available for download in the group \"%s\":\n", file_count, group_name);
+        token = strtok(NULL, ",");
+    }
+
+    parse_state = START_FILEID;
+
+    //Extract each subsequent user's name
+    while(token)
+    {   
+        switch(parse_state)
+        {
+            case START_FILEID:
+            {
+                if(token[0] != '[')
+                    break;
+                
+                printf("ID: %s\t\t", &token[1]);
+                ++parse_state;
+                break;
+            }
+
+            case FILENAME:
+            {
+                printf("\"%s\" ", token);
+                ++parse_state;
+                break;
+            }
+
+            case FILESIZE:
+            {
+                printf("(%s bytes)\t\t", token);
+                ++parse_state;
+                break;
+            }
+
+            case UPLOADER_END:
+            {
+                token_len = strlen(token);
+                printf("Uploader: %.*s\n", token_len-1, token);
+    
+                if(token[token_len-1] != ']')
+                {
+                    printf("Not end? '%c'\n", token[token_len-1]);
+                    break;
+                }
+                
+                parse_state = START_FILEID;
+                break;
+            }
+
+            default:
+                break;
+        }
+        token = strtok(NULL, ",");
+    }
+
+    return file_count;
+}
+
 
 static int incoming_group_file()
 {
@@ -676,6 +759,9 @@ static void parse_control_message(char* cmd_buffer)
     
     else if(strncmp("!cancelfile=", buffer, 12) == 0)
         file_transfer_cancelled();
+
+    else if(strncmp("!filelist=", buffer, 10) == 0)
+        parse_filelist();
 
     else if(strncmp("!getfile=", buffer, 9) == 0)
         incoming_group_file();
@@ -803,7 +889,6 @@ static inline void client_main_loop()
 
 void client(const char* hostname, const unsigned int port,  char *username)
 {
-    int retval;
     char ipaddr[INET_ADDRSTRLEN], port_str[8];
 
     atexit(exit_cleanup);

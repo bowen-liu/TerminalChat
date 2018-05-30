@@ -64,6 +64,7 @@ int invite_to_group();
 int kick_from_group();
 int change_group_member_permission(Group *group, User *user, int new_permissions);
 
+int group_filelist();
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file);
 
 #endif

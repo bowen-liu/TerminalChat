@@ -49,7 +49,6 @@ static int validate_transfer_requester (FileXferArgs_Server *request, char* requ
     User *request_user;
     Group *request_group;
 
-    enum sendrecv_op expected_target_op;
     int matches = 0;
 
     /*******************************************************************/
@@ -209,7 +208,6 @@ void cleanup_transfer_connection(Client *c)
     FileXferArgs_Server *xferargs = c->file_transfers;
     FileXferArgs_Server *target_xferargs;
 
-    User *myself;
     Client *target_xfer_connection;
 
     //Check if the transfer connection has been terminated already (usually when the user quits while transferring files)
@@ -284,7 +282,7 @@ void cancel_user_transfer(Client *c)
 }
 
 
-int transfer_invite_expired(Client *c)
+void transfer_invite_expired(Client *c)
 {
     if(!c->file_transfers)
         return 0;
@@ -714,7 +712,6 @@ FileXferArgs_Server* parse_group_fileop_cmd(int put_or_get)
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
-    Group_Member *is_member;
 
     //for getfile
     File_List *requested_file;
@@ -885,4 +882,6 @@ static int group_recv_next_piece()
 
     //Rearm epoll notifications for sender (to send the next piece)
     update_epoll_events(connections_epollfd, xferargs->xfer_socketfd, XFER_SENDER_EPOLL_EVENTS);
+
+    return bytes_recvd;
 }

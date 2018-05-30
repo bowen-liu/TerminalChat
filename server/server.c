@@ -432,7 +432,7 @@ static inline int userlist()
 {
     char* userlist_msg;
     size_t userlist_size = 0;
-    User *userlist, *curr, *temp;
+    User *curr, *temp;
 
     char group_name[USERNAME_LENG+1];
 
@@ -464,8 +464,6 @@ static inline int userlist()
 
 static inline int parse_client_command()
 {
-    int bytes; 
-
     /*Connection related commands*/
 
     if(strncmp(buffer, "!register:", 10) == 0)
@@ -522,6 +520,9 @@ static inline int parse_client_command()
         return user_cancelled_transfer();
 
     /*File Transfer for Groups*/
+    else if(strncmp(buffer, "!filelist=", 10) == 0)
+        return group_filelist();
+
     else if(strncmp(buffer, "!putfile=", 9) == 0)
         return put_new_file_to_group();
 
@@ -579,7 +580,7 @@ static inline int handle_new_connection()
 
 static inline int handle_client_msg()
 {
-    int bytes, retval;
+    int bytes;
 
     //If this connection is a transfer connection, forward the data contained directly to its target
     if(current_client->connection_type == TRANSFER_CONNECTION)

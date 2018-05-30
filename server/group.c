@@ -176,7 +176,7 @@ int basic_group_permission_check(char *group_name, Group **group_ret, Group_Memb
         send_msg(current_client, "InvalidGroup", 13);
         return 0;
     }
-    
+
     if(group_ret)
         *group_ret = group;
     
@@ -213,13 +213,10 @@ int userlist_group(char *group_name)
 
     userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + 128));
     sprintf(userlist_msg, "!userlist=%d,group=%s", group->member_count, group_name);
-    printf("%s\n", userlist_msg);
 
     //Iterate through the list of active usernames and append them to the buffer one at a time
     HASH_ITER(hh, group->members, curr, temp)
     {
-        printf("current group member: %s\n", curr->username);
-        
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
 
@@ -232,7 +229,6 @@ int userlist_group(char *group_name)
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
-    printf("%s\n", userlist_msg);
     send_new_long_msg(userlist_msg, userlist_size);
     free(userlist_msg);
 
@@ -583,9 +579,38 @@ int change_group_member_permission(Group *group, User *user, int new_permissions
 
 //Also see the "Client-Group File Sharing" section in file_transfer_server.c
 
-int group_filelist(Group *group)
+int group_filelist()
 {
-    
+    char* filelist_msg;
+    unsigned int msg_size = 0, printed = 0;
+
+    char group_name[USERNAME_LENG+1];
+    Group *group = NULL;
+    unsigned int file_count;
+    File_List *curr, *temp;
+
+    sscanf(buffer, "!filelist=%s", group_name);
+    if(!basic_group_permission_check(group_name, &group, NULL))
+        return 0;
+
+    file_count = HASH_COUNT(group->filelist);
+    filelist_msg = malloc(file_count * (MAX_FILENAME+1 + 128));
+
+    sprintf(filelist_msg, "!filelist=%d,group=%s%n", file_count, group_name, &msg_size);
+
+    //Iterate through the list of available files and append them to the buffer one at a time
+    HASH_ITER(hh, group->filelist, curr, temp)
+    {
+        sprintf(&filelist_msg[msg_size], ",[%u,%s,%zu,%s]%n", 
+                curr->fileid, curr->filename, curr->filesize, curr->uploader, &printed);
+        
+        msg_size += printed;
+    }
+
+    send_new_long_msg(filelist_msg, msg_size+1);
+    free(filelist_msg);
+
+    return file_count;
 }
 
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file)

@@ -3,8 +3,7 @@
 
 
 int hostname_to_ip(const char* hostname, const char* port, char* ip_return)
-{
-    int sockfd;  
+{ 
     struct addrinfo hints, *results;
     
     struct addrinfo *cur;

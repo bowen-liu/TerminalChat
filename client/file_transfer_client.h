@@ -70,7 +70,6 @@ int file_send_next(FileXferArgs *args);
 /*Receiving*/
 void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo);
 void parse_accept_cmd(char *buffer, FileXferArgs *args);
-int new_recv_cmd(FileXferArgs *args);
 int new_recv_connection(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args);
 

@@ -295,7 +295,13 @@ static int accept_incoming_file()
     LL_DELETE(incoming_transfers, pending_xfer);
     free(pending_xfer);
 
-    return new_recv_cmd(file_transfers);
+    //Tell the server I am accepting this file
+    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
+    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+
+    //Dial a new connection for the file transfer
+    return new_recv_connection(file_transfers);
 }
 
 

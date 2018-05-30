@@ -53,6 +53,7 @@ typedef struct group {
 unsigned int send_group(Group* group, char* buffer, size_t size);
 int group_msg();
 void disconnect_client_group_cleanup(Client *c);
+int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
 
 int userlist_group(char *group_name);
 int create_new_group();

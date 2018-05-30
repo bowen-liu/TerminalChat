@@ -101,6 +101,8 @@ static Group_Member* allocate_group_member(Group *group, Client *target_user, in
     strcpy(newgroup_entry->name, group->groupname);
     LL_APPEND(target_user->groups_joined, newgroup_entry);
 
+    return newmember;
+
     //The member's associated Group_Member and Namelist objects must be freed when the member leaves the group!!
 }
 
@@ -160,6 +162,39 @@ void disconnect_client_group_cleanup(Client *c)
     }
 }
 
+//Check if a group exists, and if the current requesting user is a member before fulfilling a request
+int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret)
+{
+    Group *group;
+    Group_Member *member;
+
+    //Check if this group exists
+    HASH_FIND_STR(groups, group_name, group);
+    if(!group)
+    {
+        printf("Group \"%s\" not found\n", group_name);
+        send_msg(current_client, "InvalidGroup", 13);
+        return 0;
+    }
+    
+    if(group_ret)
+        *group_ret = group;
+    
+    //Check if the requesting user is a member
+    HASH_FIND_STR(group->members, current_client->username, member);
+    if(!member)
+    {
+        printf("User \"%s\" is not a member of the group \"%s\".\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    if(member_ret)
+        *member_ret = member;
+    
+    return 1;
+}
+
 
 /******************************/
 /*      Group Operations    */
@@ -171,28 +206,10 @@ int userlist_group(char *group_name)
     size_t userlist_size = 0;
 
     Group *group = NULL;
-    Group_Member *is_member;
     Group_Member *curr, *temp;
-
-    printf("userlist_group()\n");
     
-    //Check if this group exists
-    HASH_FIND_STR(groups, group_name, group);
-    if(!group)
-    {
-        printf("Group \"%s\" not found\n", group_name);
-        send_msg(current_client, "InvalidGroup", 13);
+    if(!basic_group_permission_check(group_name, &group, NULL))
         return 0;
-    }
-
-    //Check if the requesting user is a member
-    HASH_FIND_STR(group->members, current_client->username, is_member);
-    if(!is_member)
-    {
-        printf("User \"%s\" tried to get the userlist of the group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
-        send_msg(current_client, "NoPermission", 13);
-        return 0;
-    }
 
     userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + 128));
     sprintf(userlist_msg, "!userlist=%d,group=%s", group->member_count, group_name);
@@ -229,7 +246,7 @@ int create_new_group()
     Group* newgroup = calloc(1, sizeof(Group));
     Group* groupname_exists = NULL;
 
-    char *newbuffer = buffer, *token;
+    char *token;
     User *target_user = NULL;
     int invites_sent = 0;
 
@@ -415,7 +432,6 @@ static int invite_to_group_direct(Group *group, User *user)
 {
     char invite_msg[BUFSIZE];
     Group_Member *already_in_group;
-    Namelist *newgroup_entry;
     
     //Check if this user is already in the group
     HASH_FIND_STR(group->members, user->username, already_in_group);
@@ -444,7 +460,6 @@ int invite_to_group()
     char group_name[USERNAME_LENG+1];
     char *newbuffer = buffer, *token;
     Group* group;
-    Group_Member* is_member;
     User* target_user;
     int users_invited = 0;
     
@@ -452,23 +467,8 @@ int invite_to_group()
     token = strtok(newbuffer, ",");
     sscanf(token, "!invitegroup=%[^,]", group_name);
 
-    //Locate the requested group in the hash table
-    HASH_FIND_STR(groups, group_name, group);
-    if(!group)
-    {
-        printf("Group \"%s\" was not found.\n", group_name);
-        send_msg(current_client, "InvalidGroup", 13);
+    if(!basic_group_permission_check(group_name, &group, NULL))
         return 0;
-    }
-
-    //Check if the requesting user is a group member itself
-    HASH_FIND_STR(group->members, current_client->username, is_member);
-    if(!is_member)
-    {
-        printf("User \"%s\" tried to invite users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
-        send_msg(current_client, "NoPermission", 13);
-        return 0;
-    }
 
     //Invite each member specified in the command
     token = strtok(NULL, ",");
@@ -506,23 +506,8 @@ int kick_from_group()
     token = strtok(newbuffer, ",");
     sscanf(token, "!kickgroup=%[^,]", group_name);
 
-    //Locate the requested group in the hash table
-    HASH_FIND_STR(groups, group_name, group);
-    if(!group)
-    {
-        printf("Group \"%s\" was not found.\n", group_name);
-        send_msg(current_client, "InvalidGroup", 13);
+    if(!basic_group_permission_check(group_name, &group, &target_member))
         return 0;
-    }
-
-    //Check if the requesting user is a group member itself
-    HASH_FIND_STR(group->members, current_client->username, target_member);
-    if(!target_member)
-    {
-        printf("User \"%s\" tried to kick users to group \"%s\", but the user is not part of the group.\n", current_client->username, group_name);
-        send_msg(current_client, "NoPermission", 13);
-        return 0;
-    }
 
     //Check if the requesting user has suffice permissions to kick others
     if(!(target_member->permissions & GRP_PERM_CAN_KICK))
@@ -591,6 +576,17 @@ int change_group_member_permission(Group *group, User *user, int new_permissions
     return 0;
 }
 
+
+/******************************/
+/*     Group File Sharing     */
+/******************************/
+
+//Also see the "Client-Group File Sharing" section in file_transfer_server.c
+
+int group_filelist(Group *group)
+{
+    
+}
 
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file)
 {

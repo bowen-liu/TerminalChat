@@ -384,40 +384,22 @@ void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
 }
 
 
-int new_recv_connection(FileXferArgs *args);
-int new_recv_cmd(FileXferArgs *args)
-{
-    char recvpath[FILENAME_MAX+1];
-    char filename[FILENAME_MAX+1];
-    char *file_extension;
-
-    int duplicate_files = 0;
-    int retval;
-    
-
-    //Tell the server I am accepting this file
-    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
-
-
-
-    /*******************************************************/
-    /* Open new connection to server for file transferring */
-    /*******************************************************/
-
-    return new_recv_connection(args);
-}
-
-
 int new_recv_connection(FileXferArgs *args)
 {
     if(!make_folder_and_file_for_writing(CLIENT_RECV_FOLDER, args->target_name, args->filename, args->target_file, &args->file_fp))
+    {
+        cancel_transfer(args);
         return 0;
+    }
 
     args->file_buffer = malloc(RECV_CHUNK_SIZE);
     args->operation = RECVING_OP;
     
+    
+    /*******************************************************/
+    /* Open new connection to server for file transferring */
+    /*******************************************************/
+
     if(!new_transfer_connection(args))
     {
         cancel_transfer(args);

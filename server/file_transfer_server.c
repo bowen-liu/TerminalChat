@@ -708,64 +708,26 @@ int client_data_forward_sender_ready()
 /* Client-Group File Sharing */
 /******************************/ 
 
-FileXferArgs_Server* parse_group_fileop_cmd(int put_or_get)
+int put_new_file_to_group()
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
-
-    //for getfile
-    File_List *requested_file;
-    unsigned int requested_fileid;
-
-    //Parse the command's parameters
-    if(put_or_get > 0)
-    {
-        sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
-                xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
-        xferargs->operation = SENDING_OP;
-    }   
-    else
-    {
-        sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
-        xferargs->operation = RECVING_OP;
-    }
-    xferargs->target_type = GROUP_TARGET; 
-
-    if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
-        return 0;
     
-    //GETFILE op: Find the associated file's information by the fileid
-    if(put_or_get <= 0)
-    {
-        HASH_FIND_INT(xferargs->target_group->filelist, &requested_fileid, requested_file);
-        if(!requested_file)
-        {
-            printf("Could not find a file associated with fileid %u in group \"%s\"\n", requested_fileid, xferargs->target_group->groupname);
-            free(xferargs);
-            send_msg(current_client, "WrongInfo", 10);
-            return NULL;
-        }
+    sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
+            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
-        strcpy(xferargs->target_file, requested_file->target_file);
-        strcpy(xferargs->filename, requested_file->filename);
-        xferargs->filesize = requested_file->filesize;
-        xferargs->checksum = requested_file->checksum;
+    //Check if group exists and user is a member
+    if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
+    {
+        free(xferargs);
+        return 0;
     }
 
     //Generate an unique token for this transfer
     generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
-
-    return xferargs;
-}
-
-
-int put_new_file_to_group()
-{
-    FileXferArgs_Server *xferargs = parse_group_fileop_cmd(1);
     
-    if(!xferargs)
-        return 0;
-    
+    xferargs->operation = SENDING_OP;
+    xferargs->target_type = GROUP_TARGET; 
     current_client->file_transfers = xferargs;
 
     //Send out a notification to the group
@@ -787,12 +749,41 @@ int put_new_file_to_group()
 
 int get_new_file_from_group()
 {
-    FileXferArgs_Server *xferargs = parse_group_fileop_cmd(0);
+    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+    char target_name[USERNAME_LENG+1];
+    File_List *requested_file;
+    unsigned int requested_fileid;
     
-    if(!xferargs)
+    sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
+
+    if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
+    {
+        free(xferargs);
         return 0;
+    }
     
+    //Find the associated file's information by the fileid
+    HASH_FIND_INT(xferargs->target_group->filelist, &requested_fileid, requested_file);
+    if(!requested_file)
+    {
+        printf("Could not find a file associated with fileid %u in group \"%s\"\n", requested_fileid, xferargs->target_group->groupname);
+        free(xferargs);
+        send_msg(current_client, "WrongInfo", 10);
+        return 0;
+    }
+
+    //Generate an unique token for this transfer
+    generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
+
+    //Copy the file information found into my xferargs
+    strcpy(xferargs->target_file, requested_file->target_file);
+    strcpy(xferargs->filename, requested_file->filename);
+    xferargs->filesize = requested_file->filesize;
+    xferargs->checksum = requested_file->checksum;
+    xferargs->operation = RECVING_OP;
+    xferargs->target_type = GROUP_TARGET; 
     current_client->file_transfers = xferargs;
+
 
     //Open the target file for reading
     xferargs->file_fp = fopen(xferargs->target_file, "rb");

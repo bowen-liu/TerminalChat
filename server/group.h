@@ -1,15 +1,25 @@
 #ifndef _GROUP_H_
 #define _GROUP_H_
 
-/*Permisison Flags*/
-#define GRP_PERM_HAS_JOINED 0x1
-#define GRP_PERM_CAN_TALK 0x2
-#define GRP_PERM_CAN_INVITE 0x4
-#define GRP_PERM_CAN_KICK 0x8
-#define GRP_PERM_CAN_SETPERM 0x10
+/*Permisison flags for group members*/
+#define GRP_PERM_HAS_JOINED     0x1
+#define GRP_PERM_CAN_TALK       0x2
+#define GRP_PERM_CAN_INVITE     0x4
+#define GRP_PERM_CAN_KICK       0x8
+#define GRP_PERM_CAN_PUTFILE    0x10
+#define GRP_PERM_CAN_GETFILE    0x20
+#define GRP_PERM_CAN_SETPERM    0x40
 
-#define GRP_PERM_DEFAULT (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE)
-#define GRP_PERM_ADMIN   (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
+#define GRP_PERM_DEFAULT        (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE)
+#define GRP_PERM_ADMIN          (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
+
+
+/*Permission flags for individual groups*/
+#define GRP_FLAG_INVITE_ONLY    0x1
+#define GRP_FLAG_ALLOW_XFER     0x2
+
+#define GRP_FLAG_DEFAULT        (GRP_FLAG_ALLOW_XFER)
+
 
 
 /*Data structures*/
@@ -41,6 +51,7 @@ typedef struct group {
     char groupname[USERNAME_LENG+1];
     Group_Member *members;
     unsigned int member_count;
+    int group_flags;
     
     //For group file sharing
     unsigned int last_fileid;

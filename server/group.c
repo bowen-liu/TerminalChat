@@ -287,6 +287,7 @@ int create_new_group()
 
     //Register the group
     HASH_ADD_STR(groups, groupname, newgroup);
+    newgroup->group_flags = GRP_FLAG_DEFAULT;
 
     //Invite each of the clients to join the group
     token = current_client->username;
@@ -424,8 +425,20 @@ int join_group()
         printf("User \"%s\" has a pending invitation to the group \"%s\".\n", current_client->username, group->groupname);
         newmember->permissions |= GRP_PERM_HAS_JOINED;
     }
+
+    //If no invitation found, let the user join as a new regular member if the group isn't invite only.
     else
-        newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
+    {
+        if(!(group->group_flags & GRP_FLAG_INVITE_ONLY))
+            newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
+        else
+        {
+            printf("User \"%s\" wanted to join group \"%s\", but it's invite only.\n", current_client->username, group->groupname);
+            send_msg(current_client, "InviteOnly", 11);
+            return 0;
+        }
+    }
+        
 
     printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
     ++group->member_count;
@@ -475,6 +488,7 @@ int invite_to_group()
     char group_name[USERNAME_LENG+1];
     char *newbuffer = buffer, *token;
     Group* group;
+    Group_Member *requesting_member;
     User* target_user;
     int users_invited = 0;
     
@@ -482,8 +496,16 @@ int invite_to_group()
     token = strtok(newbuffer, ",");
     sscanf(token, "!invitegroup=%[^,]", group_name);
 
-    if(!basic_group_permission_check(group_name, &group, NULL))
+    if(!basic_group_permission_check(group_name, &group, &requesting_member))
         return 0;
+
+    //Check if the member has permission to invite others to the group
+    if(!(requesting_member->permissions & GRP_PERM_CAN_INVITE))
+    {
+        printf("User \"%s\" tried to invite users from group \"%s\", but the user does not have the permission.\n", current_client->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
 
     //Invite each member specified in the command
     token = strtok(NULL, ",");
@@ -527,7 +549,7 @@ int kick_from_group()
     //Check if the requesting user has suffice permissions to kick others
     if(!(target_member->permissions & GRP_PERM_CAN_KICK))
     {
-        printf("User \"%s\" tried to invite users to group \"%s\", but the user does not have the permission.\n", current_client->username, group_name);
+        printf("User \"%s\" tried to kick users from group \"%s\", but the user does not have the permission.\n", current_client->username, group_name);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
@@ -605,12 +627,23 @@ int group_filelist()
 
     char group_name[USERNAME_LENG+1];
     Group *group = NULL;
+    Group_Member *target_member;
+
     unsigned int file_count;
     File_List *curr, *temp;
 
     sscanf(buffer, "!filelist=%s", group_name);
-    if(!basic_group_permission_check(group_name, &group, NULL))
+
+    if(!basic_group_permission_check(group_name, &group, &target_member))
         return 0;
+    
+    //Check if group allows file transfers and the user has such permission.
+    if( !(group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
+    {
+        printf("User \"%s\" is not permitted to list files from group \"%s\"\n", target_member->username, group_name);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
 
     file_count = HASH_COUNT(group->filelist);
     filelist_msg = malloc(file_count * (MAX_FILENAME+1 + 128));

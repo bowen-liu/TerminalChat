@@ -712,13 +712,23 @@ int put_new_file_to_group()
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
+    Group_Member *target_member;
     
     sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
     //Check if group exists and user is a member
-    if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
+    if(!basic_group_permission_check(target_name, &xferargs->target_group, &target_member))
     {
+        free(xferargs);
+        return 0;
+    }
+
+    //Check if group allows file transfers and the user has such permission.
+    if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_PUTFILE) )
+    {
+        printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->username, target_name);
+        send_msg(current_client, "NoPermission", 13);
         free(xferargs);
         return 0;
     }
@@ -751,13 +761,25 @@ int get_new_file_from_group()
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
+    Group_Member *target_member;
+    
     File_List *requested_file;
     unsigned int requested_fileid;
     
     sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
 
+    //Check if group exists and user is a member
     if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
     {
+        free(xferargs);
+        return 0;
+    }
+
+    //Check if group allows file transfers and the user has such permission.
+    if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
+    {
+        printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->username, target_name);
+        send_msg(current_client, "NoPermission", 13);
         free(xferargs);
         return 0;
     }

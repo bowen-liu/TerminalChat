@@ -285,7 +285,7 @@ void cancel_user_transfer(Client *c)
 void transfer_invite_expired(Client *c)
 {
     if(!c->file_transfers)
-        return 0;
+        return;
     
     //Notify the sender of file expiry
     sprintf(buffer, "!rejectfile=%s,reason=%s", c->file_transfers->target_user->username, "Expired");

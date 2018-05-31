@@ -606,84 +606,37 @@ static int begin_file_sending()
 static int parse_filelist()
 {
     char group_name[USERNAME_LENG+1];
-    unsigned int file_count;
-    char* newbuffer = buffer;
+    unsigned int file_count, i;
+    unsigned int header_len;
 
-    char* token;
-    int token_len;
+    char *current_fileinfo = 0;
+    unsigned int current_fileinfo_idx = 0;
 
-    enum parse_states {START_FILEID = 0, FILENAME, FILESIZE, UPLOADER_END} parse_state;
+    unsigned int fileid;
+    char uploader[USERNAME_LENG+1];
+    char filename[MAX_FILENAME+1];
+    size_t filesize;
 
     //Parse the header
-    token = strtok(newbuffer, ",");
-    if(!token)
-        return 0;
-    sscanf(token, "!filelist=%u", &file_count);
+    sscanf(buffer, "!filelist=%u,group=%[^,],%n", &file_count, group_name, &header_len);
+    printf("%u files are available for download in the group \"%s\":\n", file_count, group_name);
 
-    //Is the following token the name of a group?
-    token = strtok(NULL, ",");
-    if(!token)
-        return 0;
-
-    //This is a group userlist
-    if(strncmp(token, "group=", 6) == 0)
-    {
-        sscanf(token, "group=%[^,]", group_name);
-        printf("%u files are available for download in the group \"%s\":\n", file_count, group_name);
-        token = strtok(NULL, ",");
-    }
-
-    parse_state = START_FILEID;
-
-    //Extract each subsequent user's name
-    while(token)
-    {   
-        switch(parse_state)
-        {
-            case START_FILEID:
-            {
-                if(token[0] != '[')
-                    break;
-                
-                printf("ID: %s\t\t", &token[1]);
-                ++parse_state;
-                break;
-            }
-
-            case FILENAME:
-            {
-                printf("\"%s\" ", token);
-                ++parse_state;
-                break;
-            }
-
-            case FILESIZE:
-            {
-                printf("(%s bytes)\t\t", token);
-                ++parse_state;
-                break;
-            }
-
-            case UPLOADER_END:
-            {
-                token_len = strlen(token);
-                printf("Uploader: %.*s\n", token_len-1, token);
+    current_fileinfo_idx = header_len;
+    printf("header_len: %d\n", header_len);
     
-                if(token[token_len-1] != ']')
-                {
-                    printf("Not end? '%c'\n", token[token_len-1]);
-                    break;
-                }
-                
-                parse_state = START_FILEID;
-                break;
-            }
-
-            default:
-                break;
-        }
-        token = strtok(NULL, ",");
+    //Extract each subsequent file's info from the message
+    for(i=0; i<file_count; i++)
+    {
+        current_fileinfo = strchr(&buffer[current_fileinfo_idx], '[');
+        if(!current_fileinfo)
+            break;
+        
+        current_fileinfo_idx = current_fileinfo - buffer + 1;
+        
+        sscanf(current_fileinfo, "[%u,%[^,],%zu,%[^]]]", &fileid, filename, &filesize, uploader);
+        printf("FileID: %u \t \"%s\" (%zu bytes) \t Uploader: %s\n", fileid, filename, filesize, uploader);
     }
+     
 
     return file_count;
 }

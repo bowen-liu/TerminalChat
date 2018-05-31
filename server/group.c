@@ -111,32 +111,51 @@ static void remove_group(Group *group)
 {
     unsigned int mcount = HASH_COUNT(group->members), rcount = 0;
 
-    Group_Member *curr = NULL, *tmp;
+    Group_Member *cur_member = NULL, *tmp_member;
     Namelist *groupname_entry;
+
+    File_List *cur_file, *tmp_file;
+    char group_files_directory[MAX_FILE_PATH+1];
     
     if(mcount > 0)
     {
         printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
         
         //Remove any remaining member objects
-        HASH_ITER(hh, group->members, curr, tmp) 
+        HASH_ITER(hh, group->members, cur_member, tmp_member) 
         {
-            printf("Removing unused invite for user \"%s\".\n", curr->username);
+            printf("Removing unused invite for user \"%s\".\n", cur_member->username);
 
-            groupname_entry = find_from_namelist(curr->c->groups_joined, group->groupname);
+            groupname_entry = find_from_namelist(cur_member->c->groups_joined, group->groupname);
             if(groupname_entry)
             {
-                LL_DELETE(curr->c->groups_joined, groupname_entry);
+                LL_DELETE(cur_member->c->groups_joined, groupname_entry);
                 free(groupname_entry);
             }
             else
                 printf("Group entry was not found in client's descriptor\n");
 
-            free(curr);
+            free(cur_member);
             ++rcount;
         }
         printf("Removed %u unresponded invites from group \"%s\"\n", rcount, group->groupname);
     }
+
+    //Delete all files uploaded to this group
+    HASH_ITER(hh, group->filelist, cur_file, tmp_file)
+    {
+        printf("Removing local file \"%s\" from deleted group \"%s\"\n", cur_file->target_file, group->groupname);
+        
+        if(remove(cur_file->target_file) < 0)
+            perror("Failed to delete file.");
+
+        free(cur_file);
+    }
+    
+    sprintf(group_files_directory, "%s/%s", GROUP_XFER_ROOT, group->groupname);
+    printf("Removing local folder \"%s\"\n", group_files_directory);
+    if(remove(group_files_directory) < 0)
+        perror("Failed to delete directorys.");
 
     HASH_DEL(groups, group);
     free(group);

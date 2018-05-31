@@ -12,21 +12,24 @@ common.o: crc32.o
 
 
 #Server
-group.o: common.o
-	$(CC) $(CFLAGS) -c server/group.c
+group_server.o: common.o
+	$(CC) $(CFLAGS) -c server/group.c -o group_server.o
 
 file_transfer_server.o: common.o
 	$(CC) $(CFLAGS) -c server/file_transfer_server.c
 
-server.o: group.o file_transfer_server.o
+server.o: group_server.o file_transfer_server.o
 	$(CC) $(CFLAGS) -c server/server.c 
 
 
 #Client
+group_client.o: common.o
+	$(CC) $(CFLAGS) -c client/group.c -o group_client.o
+
 file_transfer_client.o: common.o
 	$(CC) $(CFLAGS) -c client/file_transfer_client.c
 
-client.o: file_transfer_client.o
+client.o: group_client.o file_transfer_client.o
 	$(CC) $(CFLAGS) -c client/client.c
 
 

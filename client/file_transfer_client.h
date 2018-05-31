@@ -53,28 +53,34 @@ typedef struct fileinfo{
 } FileInfo;
 
 
+extern FileXferArgs *file_transfers;
+extern FileInfo *incoming_transfers; 
+
+
 /*Connection and helpers*/
 void cancel_transfer(FileXferArgs *args);
-FileInfo* find_pending_xfer(char *sender_name);
-unsigned int delete_pending_xfer(char *sender_name);
 void print_transfer_progress();
 
 
-/*Sending*/
-void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group);
-int new_send_cmd(FileXferArgs *args);
-int recver_accepted_file(char* buffer);
+/*Ongoing sending and receiving*/
 int file_send_next(FileXferArgs *args);
-
-
-/*Receiving*/
-void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo);
-void parse_accept_cmd(char *buffer, FileXferArgs *args);
-int new_recv_connection(FileXferArgs *args);
 int file_recv_next(FileXferArgs *args);
 
-/*Group Send/Recv*/
-int put_file_to_group(FileXferArgs *args);
-int get_file_from_group();
+
+/*Handle Server control messages*/
+int incoming_file();
+int rejected_file_sending();
+void file_transfer_cancelled();
+int begin_file_sending();
+int incoming_group_file();
+
+
+/*Handle Client-side Operations*/
+int outgoing_file();
+int outgoing_file_group();
+int accept_incoming_file();
+int reject_incoming_file();
+int cancel_ongoing_file_transfer();
+
 
 #endif

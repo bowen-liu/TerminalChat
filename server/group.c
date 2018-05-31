@@ -648,7 +648,7 @@ int add_file_to_group(Group *group, char *uploader, char *filename, size_t files
 
     //TODO: Expiry timer
 
-    sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\". \n", 
+    sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\".", 
                 new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);
 
     send_group(group, new_file_msg, strlen(new_file_msg)+1);

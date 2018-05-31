@@ -1,10 +1,10 @@
 #include "client.h"
 
+char* my_username;
+
 //Socket for communicating with the server
 int my_socketfd;                                    //My (client) main socket connection with the server
 struct sockaddr_in server_addr;                     //Server's information struct
-
-//epoll event structures for handling multiple clients 
 int epoll_fd;
 
 //Receive buffers
@@ -17,17 +17,9 @@ static char *long_buffer;
 static size_t expected_long_size;
 static size_t received_long;
 
-//User info
-char* my_username;
-static Namelist* groups_joined;
-
 //Other clients
 static Member *online_members = NULL;
 static unsigned int users_online = 0;
-
-//Pending File Transfers
-FileInfo *incoming_transfers;                           //Outstanding incoming transfers that I can accept
-FileXferArgs *file_transfers;                           //The current file transfer that's in progress
 
 
 
@@ -167,7 +159,7 @@ static void recv_long_msg()
 
 
 /******************************/
-/*   Client-side Operations    */
+/*   Client-side Operations   */
 /******************************/
 
 static int register_with_server()
@@ -207,140 +199,6 @@ static int register_with_server()
 }
 
 
-static int leave_group()
-{
-    char groupname[USERNAME_LENG+1];
-    Namelist *current_group_name, *tmp_name;
-
-    sscanf(buffer, "!leavegroup=%s", groupname);
-
-    //Find the entry in the client's group_joined list and remove the entry
-    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp_name)
-    {
-        if(strcmp(groupname, current_group_name->name) == 0)
-            break;
-        else 
-            current_group_name = NULL;
-    }
-
-    if(!current_group_name)
-    {
-        printf("You do not appear to be a member of the group \"%s\".\n", groupname);
-        return 0;
-    }
-
-    printf("You have left the group \"%s\".\n", groupname);
-    LL_DELETE(groups_joined, current_group_name);
-    free(current_group_name);
-    return 1;
-}
-
-static int outgoing_file()
-{
-    if(file_transfers)
-    {
-        printf("A pending file transfer already exist. Cannot continue...\n");
-        return 0;
-    }
-
-    file_transfers = calloc(1, sizeof(FileXferArgs));
-
-    parse_send_cmd_sender(buffer, file_transfers, 0);
-    if(!new_send_cmd(file_transfers))
-        return 0;
-
-    return 1;
-}
-
-static int outgoing_file_group()
-{
-    if(file_transfers)
-    {
-        printf("A pending file transfer already exist. Cannot continue...\n");
-        return 0;
-    }
-
-    file_transfers = calloc(1, sizeof(FileXferArgs));
-
-    parse_send_cmd_sender(buffer, file_transfers, 1);
-    if(!put_file_to_group(file_transfers))
-        return 0;
-
-    return 1;
-}
-
-static int accept_incoming_file()
-{
-    char target_name[USERNAME_LENG+1];
-    FileInfo *pending_xfer;
-
-    sscanf(buffer, "!acceptfile=%s",target_name);
-
-    //Find the file associated with the sender
-    pending_xfer = find_pending_xfer(target_name);
-    if(!pending_xfer)
-    {
-        printf("User \"%s\" hasn't offered any files.\n", target_name);
-        return 0;
-    }
-
-    file_transfers = calloc(1, sizeof(FileXferArgs));
-    strcpy(file_transfers->target_name, target_name);
-    strcpy(file_transfers->filename, pending_xfer->filename);
-    strcpy(file_transfers->token, pending_xfer->token);
-    file_transfers->filesize = pending_xfer->filesize;
-    file_transfers->checksum = pending_xfer->checksum;
-
-    LL_DELETE(incoming_transfers, pending_xfer);
-    free(pending_xfer);
-
-    //Tell the server I am accepting this file
-    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
-
-    //Dial a new connection for the file transfer
-    return new_recv_connection(file_transfers);
-}
-
-
-static int reject_incoming_file()
-{
-    char target_name[USERNAME_LENG+1];
-
-    sscanf(buffer, "!rejectfile=%s", target_name);
-    if(delete_pending_xfer(target_name) == 0)
-    {
-        printf("User \"%s\" hasn't offered any files.\n", target_name);
-        return 0;
-    }
-
-    sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
-    send_msg(buffer, strlen(buffer)+1);
-
-    return 0;
-}
-
-
-static int cancel_ongoing_file_transfer()
-{
-    if(!file_transfers)
-    {
-        printf("No file transfers are in progress.\n");
-        return 0;
-    }
-
-    printf("Ongoing transfer has been cancelled.\n");
-    sprintf(buffer,"!cancelfile=%s,reason=%s", 
-            file_transfers->target_name, (file_transfers->operation == SENDING_OP)? "SenderCancelled":"RecverCancelled");
-    send_msg(buffer, strlen(buffer)+1);
-    cancel_transfer(file_transfers);
-
-    return 0;
-}
-
-
-
 
 static int handle_user_command()
 {
@@ -352,8 +210,12 @@ static int handle_user_command()
         exit(0);
     }
 
+    /*Group operations. Implemented in group.c*/
+
     else if(strncmp(buffer, "!leavegroup=", 12) == 0)
-        return leave_group();
+        return leaving_group();
+
+    /*File Transfer operations. Implemented in file_transfer_client.c*/
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
         return outgoing_file();
@@ -407,75 +269,6 @@ static void user_online()
     HASH_ADD_STR(online_members, username, member);
     ++users_online;
 }
-
-//TODO: Maybe allow the user to choose to decline an invitation?
-static void group_invited()
-{
-    char group_name[USERNAME_LENG+1], invite_sender[USERNAME_LENG+1];
-
-    sscanf(buffer, "!groupinvite=%[^,],sender=%s", group_name, invite_sender);
-    printf("You are being invited to the group \"%s\" by user \"%s\".\n", group_name, invite_sender);
-
-    //Automatically accept it for now
-    sprintf(buffer, "!joingroup=%s", group_name);
-    send_msg(buffer, strlen(buffer)+1);
-}
-
-static void group_joined()
-{
-    Namelist *groupname = malloc(sizeof(Namelist));
-
-    sscanf(buffer, "!groupjoined=%s", groupname->name);
-    printf("You have joined the group \"%s\".\n", groupname->name);
-
-    //Record the invited group into the list of participating groups
-    LL_APPEND(groups_joined, groupname);
-}
-
-static void group_kicked()
-{
-    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1];
-    Namelist *current_group_name, *tmp;
-
-    sscanf(buffer, "!groupkicked=%[^,],by=%s", group_name, kicked_by);
-    printf("You have been kicked out of the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
-
-    //Find the entry in the client's group_joined list and remove the entry
-    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp)
-    {
-        if(strcmp(group_name, current_group_name->name) == 0)
-            break;
-        else 
-            current_group_name = NULL;
-    }
-
-    if(current_group_name)
-    {
-        LL_DELETE(groups_joined, current_group_name);
-        free(current_group_name);
-    }
-    else
-        printf("You do not appear to be a member of the group \"%s\".\n", group_name);
-}
-
-
-static void user_left_group()
-{
-    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
-
-    sscanf(buffer, "!leftgroup=%[^,],user=%s", groupname, username);
-    printf("User \"%s\" has left the group \"%s\".\n", username, groupname);
-}
-
-
-static void user_joined_group()
-{
-    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
-
-    sscanf(buffer, "!joinedgroup=%[^,],user=%s", groupname, username);
-    printf("User \"%s\" has joined the group \"%s\".\n", username, groupname);
-}
-
 
 static void parse_userlist()
 {
@@ -531,140 +324,6 @@ static void parse_userlist()
 }
 
 
-/*File Transfer*/
-
-static int incoming_file()
-{
-    FileInfo *fileinfo = calloc(1,sizeof(FileInfo));
-
-    parse_send_cmd_recver(buffer, fileinfo);
-    printf("User \"%s\" would like to send you the file \"%s\" (%zu bytes, crc: %x, token: %s)\n", 
-            fileinfo->target_name, fileinfo->filename, fileinfo->filesize,fileinfo->checksum, fileinfo->token);
-
-    //If the same user has offered any other files previously, delete them
-    delete_pending_xfer(fileinfo->target_name);
-    LL_APPEND(incoming_transfers, fileinfo);
-
-    return 1;
-}
-
-
-static int rejected_file_sending()
-{
-    char target_name[USERNAME_LENG+1];
-    char reason[MAX_MSG_LENG+1];
-
-    if(!file_transfers)
-        return 0;
-    
-    sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
-    printf("File Transfer with \"%s\" has been declined. Reason: \"%s\"\n", target_name, reason);
-    cancel_transfer(file_transfers);
-
-    return 1;
-}
-
-static void file_transfer_cancelled()
-{
-    char target_name[USERNAME_LENG+1];
-    char reason[MAX_MSG_LENG+1];
-    FileInfo *curr, *temp;
-
-    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
-
-    if(file_transfers && strcmp(file_transfers->target_name, target_name) == 0)
-    {
-        printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
-        cancel_transfer(file_transfers);
-        return;
-    }
-    
-    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
-    {
-        if(strcmp(curr->target_name, target_name) == 0)
-        {
-            LL_DELETE(incoming_transfers, curr);
-            free(curr);
-            break;
-        }
-        else
-            curr = NULL;
-    }
-
-    if(curr)
-        printf("File Transfer invitation with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
-    else
-        printf("No file transfers with \"%s\" exists to be cancelled. \n", target_name);
-}
-
-
-static int begin_file_sending()
-{
-    return recver_accepted_file(buffer);
-}
-
-static int parse_filelist()
-{
-    char group_name[USERNAME_LENG+1];
-    unsigned int file_count, i;
-    unsigned int header_len;
-
-    char *current_fileinfo = 0;
-    unsigned int current_fileinfo_idx = 0;
-
-    unsigned int fileid;
-    char uploader[USERNAME_LENG+1];
-    char filename[MAX_FILENAME+1];
-    size_t filesize;
-
-    //Parse the header
-    sscanf(buffer, "!filelist=%u,group=%[^,],%n", &file_count, group_name, &header_len);
-    printf("%u files are available for download in the group \"%s\":\n", file_count, group_name);
-
-    current_fileinfo_idx = header_len;
-    printf("header_len: %d\n", header_len);
-    
-    //Extract each subsequent file's info from the message
-    for(i=0; i<file_count; i++)
-    {
-        current_fileinfo = strchr(&buffer[current_fileinfo_idx], '[');
-        if(!current_fileinfo)
-            break;
-        
-        current_fileinfo_idx = current_fileinfo - buffer + 1;
-        
-        sscanf(current_fileinfo, "[%u,%[^,],%zu,%[^]]]", &fileid, filename, &filesize, uploader);
-        printf("FileID: %u \t \"%s\" (%zu bytes) \t Uploader: %s\n", fileid, filename, filesize, uploader);
-    }
-     
-
-    return file_count;
-}
-
-
-static int incoming_group_file()
-{
-    if(file_transfers)
-    {
-        printf("Already have ongoing file transfers...\n");
-        return 0;
-    }
-
-    file_transfers = calloc(1,sizeof(FileXferArgs)); 
-    sscanf(buffer, "!getfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
-            file_transfers->filename, &file_transfers->filesize, &file_transfers->checksum, file_transfers->target_name, file_transfers->token);    
-
-    printf("File \"%s\" (%zu bytes, crc: %x, token: %s) from group \"%s\" is ready for download.\n", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->token, file_transfers->target_name);
-
-    //Directly open a new connection to accept the file
-    new_recv_connection(file_transfers);
-
-    return 0;
-}
-
-
-
 static void parse_control_message(char* cmd_buffer)
 {
     char *old_buffer = buffer;
@@ -682,7 +341,7 @@ static void parse_control_message(char* cmd_buffer)
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
 
-
+    /*Group operations. Implemented in group.c*/
 
     else if(strncmp("!groupinvite=", buffer, 13) == 0)
         group_invited();
@@ -699,7 +358,7 @@ static void parse_control_message(char* cmd_buffer)
     else if(strncmp("!groupkicked=", buffer, 13) == 0)
         group_kicked();
 
-    
+    /*File Transfer operations. Implemented in file_transfer_client.c*/
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)
         incoming_file();
@@ -904,9 +563,5 @@ void client(const char* hostname, const unsigned int port,  char *username)
     if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))
         return; 
 
-
     client_main_loop();
-   
-    //Terminate the connection with the server
-    close(my_socketfd);
 }

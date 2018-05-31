@@ -3,25 +3,17 @@
 
 #include "../common/common.h"
 #include "file_transfer_client.h"
+#include "group.h"
 
 #define MAX_EPOLL_EVENTS    32 
 #define CLIENT_EPOLL_FLAGS         (EPOLLIN)
-
-
-typedef struct {
-    
-    char username[USERNAME_LENG+1];
-    UT_hash_handle hh;
-
-} Member;
 
 
 extern int my_socketfd;
 extern struct sockaddr_in server_addr;
 extern int epoll_fd;
 extern char* my_username;
-extern FileXferArgs *file_transfers;
-extern FileInfo *incoming_transfers; 
+
 
 extern char *buffer;
 

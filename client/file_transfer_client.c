@@ -8,17 +8,13 @@
 #include <errno.h>
 
 
+FileInfo *incoming_transfers;                           //Outstanding incoming transfers that I can accept
+FileXferArgs *file_transfers;                           //The current file transfer that's in progress
+
 
 /******************************/
 /*           Helpers          */
 /******************************/ 
-
-int path_is_file(const char *path)
-{
-    struct stat path_stat;
-    stat(path, &path_stat);
-    return S_ISREG(path_stat.st_mode);
-}
 
 void cancel_transfer(FileXferArgs *args)
 {
@@ -49,69 +45,6 @@ void cancel_transfer(FileXferArgs *args)
     file_transfers = NULL;
 }
 
-
-static int new_transfer_connection(FileXferArgs *args)
-{
-    args->socketfd = socket(AF_INET, SOCK_STREAM, 0);
-
-    if(!args->socketfd)
-    {
-        perror("Failed to create socket for new transfer connection.");
-        return 0;
-    }
-
-    if(connect(args->socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr_in)) < 0)
-    {
-        perror("Failed to connect for new transfer connection.");
-        return 0;
-    }
-
-    //Wait for server greeting
-    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
-    {
-        cancel_transfer(args);
-        return 0;
-    }
-    printf("%s\n", buffer);
-
-    return args->socketfd;
-}
-
-
-FileInfo* find_pending_xfer(char *sender_name)
-{
-    FileInfo *curr, *temp; 
-
-    //Find the file associated with the sender
-    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
-    {
-        if(strcmp(curr->target_name, sender_name) == 0)
-            break;
-        else
-            curr = NULL;
-    }
-    
-    return curr;
-}
-
-
-unsigned int delete_pending_xfer(char *sender_name)
-{
-    unsigned int count = 0;
-    FileInfo *curr, *temp; 
-
-    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
-    {
-        if(strcmp(curr->target_name, sender_name) == 0)
-        {
-            LL_DELETE(incoming_transfers, curr);
-            free(curr);
-            ++count;
-        }
-    }
-    
-    return count;
-}
 
 void print_transfer_progress()
 {
@@ -154,12 +87,78 @@ void print_transfer_progress()
 }
 
 
+static int new_transfer_connection(FileXferArgs *args)
+{
+    args->socketfd = socket(AF_INET, SOCK_STREAM, 0);
+
+    if(!args->socketfd)
+    {
+        perror("Failed to create socket for new transfer connection.");
+        return 0;
+    }
+
+    if(connect(args->socketfd, (struct sockaddr*) &server_addr, sizeof(struct sockaddr_in)) < 0)
+    {
+        perror("Failed to connect for new transfer connection.");
+        return 0;
+    }
+
+    //Wait for server greeting
+    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    {
+        cancel_transfer(args);
+        return 0;
+    }
+    printf("%s\n", buffer);
+
+    return args->socketfd;
+}
+
+
+static FileInfo* find_pending_xfer(char *sender_name)
+{
+    FileInfo *curr, *temp; 
+
+    //Find the file associated with the sender
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, sender_name) == 0)
+            break;
+        else
+            curr = NULL;
+    }
+    
+    return curr;
+}
+
+
+static unsigned int delete_pending_xfer(char *sender_name)
+{
+    unsigned int count = 0;
+    FileInfo *curr, *temp; 
+
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, sender_name) == 0)
+        {
+            LL_DELETE(incoming_transfers, curr);
+            free(curr);
+            ++count;
+        }
+    }
+    
+    return count;
+}
+
+
+
+
 /******************************/
 /*          File Send         */
 /******************************/ 
 
 //Used by the sending client locally to parse its command into a FileXferArgs struct
-void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group)
+static void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group)
 {
     //You must fill args->socketfd before or after you call this function
 
@@ -182,7 +181,7 @@ void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group
 
 
 //Used by the sending client locally to parse its command into a FileXferArgs struct
-void parse_accept_cmd(char *buffer, FileXferArgs *args)
+static void parse_accept_cmd(char *buffer, FileXferArgs *args)
 {
     memset(args, 0 ,sizeof(FileXferArgs));
     sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
@@ -228,7 +227,7 @@ static int load_sending_file(FileXferArgs *args)
 }
 
 
-int new_send_cmd(FileXferArgs *args)
+static int new_send_cmd(FileXferArgs *args)
 {
     if(!load_sending_file(args))
         return 0;
@@ -247,7 +246,7 @@ int new_send_cmd(FileXferArgs *args)
 }
 
 
-int recver_accepted_file(char* buffer)
+static int recver_accepted_file(char* buffer)
 {
     char accepted_filename[FILENAME_MAX+1];
     size_t accepted_filesize;
@@ -374,7 +373,7 @@ int file_send_next(FileXferArgs *args)
 /******************************/ 
 
 //Used by the receiver and server to parse its command into a FileXferArgs struct
-void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
+static void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
 {
     memset(fileinfo, 0 ,sizeof(FileInfo));
     sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
@@ -386,7 +385,7 @@ void parse_send_cmd_recver(char *buffer, FileInfo *fileinfo)
 }
 
 
-int new_recv_connection(FileXferArgs *args)
+static int new_recv_connection(FileXferArgs *args)
 {
     if(!make_folder_and_file_for_writing(CLIENT_RECV_FOLDER, args->target_name, args->filename, args->target_file, &args->file_fp))
     {
@@ -491,7 +490,7 @@ int file_recv_next(FileXferArgs *args)
 /* Client-Group File Sharing */
 /******************************/ 
 
-int put_file_to_group(FileXferArgs *args)
+static int put_file_to_group(FileXferArgs *args)
 {
     if(!load_sending_file(args))
         return 0;
@@ -509,7 +508,215 @@ int put_file_to_group(FileXferArgs *args)
     return 1;
 }
 
-int get_file_from_group()
+static int get_file_from_group()
 {
     return 1;
+}
+
+
+
+
+/**************************************/
+/*  Server Control Messages Handling  */
+/**************************************/
+
+int incoming_file()
+{
+    FileInfo *fileinfo = calloc(1,sizeof(FileInfo));
+
+    parse_send_cmd_recver(buffer, fileinfo);
+    printf("User \"%s\" would like to send you the file \"%s\" (%zu bytes, crc: %x, token: %s)\n", 
+            fileinfo->target_name, fileinfo->filename, fileinfo->filesize,fileinfo->checksum, fileinfo->token);
+
+    //If the same user has offered any other files previously, delete them
+    delete_pending_xfer(fileinfo->target_name);
+    LL_APPEND(incoming_transfers, fileinfo);
+
+    return 1;
+}
+
+
+int rejected_file_sending()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+
+    if(!file_transfers)
+        return 0;
+    
+    sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
+    printf("File Transfer with \"%s\" has been declined. Reason: \"%s\"\n", target_name, reason);
+    cancel_transfer(file_transfers);
+
+    return 1;
+}
+
+void file_transfer_cancelled()
+{
+    char target_name[USERNAME_LENG+1];
+    char reason[MAX_MSG_LENG+1];
+    FileInfo *curr, *temp;
+
+    sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
+
+    if(file_transfers && strcmp(file_transfers->target_name, target_name) == 0)
+    {
+        printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+        cancel_transfer(file_transfers);
+        return;
+    }
+    
+    LL_FOREACH_SAFE(incoming_transfers, curr, temp)
+    {
+        if(strcmp(curr->target_name, target_name) == 0)
+        {
+            LL_DELETE(incoming_transfers, curr);
+            free(curr);
+            break;
+        }
+        else
+            curr = NULL;
+    }
+
+    if(curr)
+        printf("File Transfer invitation with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
+    else
+        printf("No file transfers with \"%s\" exists to be cancelled. \n", target_name);
+}
+
+
+int begin_file_sending()
+{
+    return recver_accepted_file(buffer);
+}
+
+int incoming_group_file()
+{
+    if(file_transfers)
+    {
+        printf("Already have ongoing file transfers...\n");
+        return 0;
+    }
+
+    file_transfers = calloc(1,sizeof(FileXferArgs)); 
+    sscanf(buffer, "!getfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
+            file_transfers->filename, &file_transfers->filesize, &file_transfers->checksum, file_transfers->target_name, file_transfers->token);    
+
+    printf("File \"%s\" (%zu bytes, crc: %x, token: %s) from group \"%s\" is ready for download.\n", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->token, file_transfers->target_name);
+
+    //Directly open a new connection to accept the file
+    new_recv_connection(file_transfers);
+
+    return 0;
+}
+
+
+
+/******************************/
+/*   Client-side Operations   */
+/******************************/
+
+int outgoing_file()
+{
+    if(file_transfers)
+    {
+        printf("A pending file transfer already exist. Cannot continue...\n");
+        return 0;
+    }
+
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+
+    parse_send_cmd_sender(buffer, file_transfers, 0);
+    if(!new_send_cmd(file_transfers))
+        return 0;
+
+    return 1;
+}
+
+int outgoing_file_group()
+{
+    if(file_transfers)
+    {
+        printf("A pending file transfer already exist. Cannot continue...\n");
+        return 0;
+    }
+
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+
+    parse_send_cmd_sender(buffer, file_transfers, 1);
+    if(!put_file_to_group(file_transfers))
+        return 0;
+
+    return 1;
+}
+
+int accept_incoming_file()
+{
+    char target_name[USERNAME_LENG+1];
+    FileInfo *pending_xfer;
+
+    sscanf(buffer, "!acceptfile=%s",target_name);
+
+    //Find the file associated with the sender
+    pending_xfer = find_pending_xfer(target_name);
+    if(!pending_xfer)
+    {
+        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        return 0;
+    }
+
+    file_transfers = calloc(1, sizeof(FileXferArgs));
+    strcpy(file_transfers->target_name, target_name);
+    strcpy(file_transfers->filename, pending_xfer->filename);
+    strcpy(file_transfers->token, pending_xfer->token);
+    file_transfers->filesize = pending_xfer->filesize;
+    file_transfers->checksum = pending_xfer->checksum;
+
+    LL_DELETE(incoming_transfers, pending_xfer);
+    free(pending_xfer);
+
+    //Tell the server I am accepting this file
+    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
+    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+
+    //Dial a new connection for the file transfer
+    return new_recv_connection(file_transfers);
+}
+
+
+int reject_incoming_file()
+{
+    char target_name[USERNAME_LENG+1];
+
+    sscanf(buffer, "!rejectfile=%s", target_name);
+    if(delete_pending_xfer(target_name) == 0)
+    {
+        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        return 0;
+    }
+
+    sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
+    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+
+    return 0;
+}
+
+
+int cancel_ongoing_file_transfer()
+{
+    if(!file_transfers)
+    {
+        printf("No file transfers are in progress.\n");
+        return 0;
+    }
+
+    printf("Ongoing transfer has been cancelled.\n");
+    sprintf(buffer,"!cancelfile=%s,reason=%s", 
+            file_transfers->target_name, (file_transfers->operation == SENDING_OP)? "SenderCancelled":"RecverCancelled");
+    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+    cancel_transfer(file_transfers);
+
+    return 0;
 }

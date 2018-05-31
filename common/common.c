@@ -172,6 +172,13 @@ int create_timerfd(int period_sec, int is_periodic, int epoll_fd)
     return timerfd;
 }
 
+int path_is_file(const char *path)
+{
+    struct stat path_stat;
+    stat(path, &path_stat);
+    return S_ISREG(path_stat.st_mode);
+}
+
 
 int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *filename, char* target_file_ret, FILE **file_fp_ret)
 {

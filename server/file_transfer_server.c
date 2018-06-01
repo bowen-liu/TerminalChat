@@ -273,16 +273,21 @@ void cancel_user_transfer(Client *c)
         return;
     }
 
-    //If the client already has an ongoing file transfer in progress
+    //If the client already has an ongoing file transfer in progress, close the connection
     if(c->file_transfers->xfer_socketfd)
-        HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
-    if(xfer_connection)
     {
-       printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
-       cleanup_transfer_connection(xfer_connection);
-       c->file_transfers = NULL;
-       return;
+        HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
+        if(xfer_connection)
+        {
+            printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
+            cleanup_transfer_connection(xfer_connection);
+            c->file_transfers = NULL;
+            return;
+        }
+
+        printf("Cannot find user \"%s\"'s transfer socket.\n ", c->username);
     }
+
 
     //If the client only has pending transfer invites
     if(c->file_transfers->timeout)
@@ -291,7 +296,6 @@ void cancel_user_transfer(Client *c)
 
     free(c->file_transfers);
     c->file_transfers = NULL;
-
 }
 
 

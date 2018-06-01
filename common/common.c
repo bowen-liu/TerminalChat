@@ -75,38 +75,38 @@ int update_epoll_events(int epoll_fd, int socketfd, int event_flags)
 }  
 
 
-int name_is_valid(char* username)
+int name_is_valid(char* name)
 {
     int i;
-    unsigned int username_leng = strlen(username);
+    unsigned int name_leng = strlen(name);
     
-    if(username_leng == 0)
+    if(name_leng == 0)
     {
         printf("Name is empty\n");
         return 0;
     }
     
-    if(username_leng > USERNAME_LENG)
+    if(name_leng > name_LENG)
     {
         printf("Name is too long.\n");
         return 0;
     }
 
 
-    //Scan for invalid characters in the username. Alternatively, consider strpbrk()
-    for(i=0; i<username_leng; i++)
+    //Scan for invalid characters in the name. Alternatively, consider strpbrk()
+    for(i=0; i<name_leng; i++)
     {
-        if(username[i] >= '0' && username[i] <= '9')
+        if(name[i] >= '0' && name[i] <= '9')
             continue;
-        else if(username[i] >= 'A' && username[i] <= 'Z')
+        else if(name[i] >= 'A' && name[i] <= 'Z')
             continue;
-        else if(username[i] >= 'a' && username[i] <= 'z')
+        else if(name[i] >= 'a' && name[i] <= 'z')
             continue;
-        else if(username[i] == '.' || username[i] == '_' || username[i] == '-')
+        else if(name[i] == '.' || name[i] == '_' || name[i] == '-')
             continue;
         else
         {
-            printf("Found invalid character \'%c\' in the name. Names may only contain 0-9, A-Z, a-z, and \'.\', \'_\', \'-\'.\n", username[i]);
+            printf("Found invalid character \'%c\' in the name. Names may only contain 0-9, A-Z, a-z, and \'.\', \'_\', \'-\'.\n", name[i]);
             return 0;
         }
     }

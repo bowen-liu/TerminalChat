@@ -19,7 +19,7 @@ FileXferArgs *file_transfers;                           //The current file trans
 void cancel_transfer(FileXferArgs *args)
 {
     //Close network connections
-    if(args->socketfd > 0)
+    if(args->socketfd)
     {
         if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
             perror("Failed to unregister the disconnected client from epoll!");

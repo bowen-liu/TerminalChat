@@ -19,7 +19,7 @@ FileXferArgs *file_transfers;                           //The current file trans
 void cancel_transfer(FileXferArgs *args)
 {
     //Close network connections
-    if(args->socketfd)
+    if(args->socketfd > 0)
     {
         if(epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->socketfd, NULL) < 0) 
             perror("Failed to unregister the disconnected client from epoll!");
@@ -30,8 +30,11 @@ void cancel_transfer(FileXferArgs *args)
     }
 
     //Destroy the progress timer
-    epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->timerfd, NULL);
-    close(args->timerfd);
+    if(args->timerfd)
+    {
+        epoll_ctl(epoll_fd, EPOLL_CTL_DEL, args->timerfd, NULL);
+        close(args->timerfd);
+    }
     
     //Free or unmap transfer buffers, and close files
     if(args->operation == SENDING_OP)
@@ -559,6 +562,7 @@ void file_transfer_cancelled()
 
     sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
 
+    //If the ongoing transfer is being cancelled
     if(file_transfers && strcmp(file_transfers->target_name, target_name) == 0)
     {
         printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
@@ -566,6 +570,7 @@ void file_transfer_cancelled()
         return;
     }
     
+    //If a invitation is being cancelled
     LL_FOREACH_SAFE(incoming_transfers, curr, temp)
     {
         if(strcmp(curr->target_name, target_name) == 0)

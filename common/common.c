@@ -78,15 +78,23 @@ int update_epoll_events(int epoll_fd, int socketfd, int event_flags)
 int name_is_valid(char* username)
 {
     int i;
+    unsigned int username_leng = strlen(username);
     
-    if(strlen(username) > USERNAME_LENG)
+    if(username_leng == 0)
     {
-        printf("Username is too long.\n");
+        printf("Name is empty\n");
+        return 0;
+    }
+    
+    if(username_leng > USERNAME_LENG)
+    {
+        printf("Name is too long.\n");
         return 0;
     }
 
+
     //Scan for invalid characters in the username. Alternatively, consider strpbrk()
-    for(i=0; i<strlen(username); i++)
+    for(i=0; i<username_leng; i++)
     {
         if(username[i] >= '0' && username[i] <= '9')
             continue;

@@ -43,6 +43,16 @@ User* get_current_client_user()
     return user;
 }
 
+void cleanup_timer_event(TimerEvent *event)
+{
+    if(epoll_ctl(timers_epollfd, EPOLL_CTL_DEL, event->timerfd, NULL) < 0) 
+        perror("Failed to unregister expired timer from epoll!");
+    close(event->timerfd);
+
+    HASH_DEL(timers, event);
+    free(event);
+}
+
 void kill_connection(int socketfd)
 {
     if(epoll_ctl(connections_epollfd, EPOLL_CTL_DEL, socketfd, NULL) < 0) 
@@ -53,7 +63,7 @@ void kill_connection(int socketfd)
 
 static inline void cleanup_unregistered_connection(Client *c)
 {
-    printf("Dropping unregistered connection...\n");
+    printf("Dropping unregistered connection from %s:%u...\n", inet_ntoa(c->sockaddr.sin_addr), ntohs(c->sockaddr.sin_port));
     kill_connection(c->socketfd);
 }
 
@@ -100,6 +110,10 @@ void disconnect_client(Client *c)
     /*The connection is for a regular user*/
     else
         cleanup_user_connection(c); 
+
+    //Destroy the connection's idle timer, if it exists
+    if(c->idle_timer)
+        cleanup_timer_event(c->idle_timer);
     
 
     //Free objects used by this connection
@@ -107,16 +121,6 @@ void disconnect_client(Client *c)
     free(c);
 }
 
-
-void cleanup_timer_event(TimerEvent *event)
-{
-    if(epoll_ctl(timers_epollfd, EPOLL_CTL_DEL, event->timerfd, NULL) < 0) 
-        perror("Failed to unregister expired timer from epoll!");
-    close(event->timerfd);
-
-    HASH_DEL(timers, event);
-    free(event);
-}
 
 static void exit_cleanup()
 {
@@ -311,13 +315,18 @@ static inline int register_client_connection()
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
         printf("Connection already registered. Type: %d.\n", current_client->connection_type);
-        disconnect_client(current_client);
+        send_msg(current_client, "AlreadyRegistered", 18);
         return 0;
     }
 
     sscanf(buffer, "!register:username=%s", username);
     if(!name_is_valid(username))
+    {
+        send_msg(current_client, "InvalidUsername", 16);
+        disconnect_client(current_client);
         return 0;
+    }
+        
     
     //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
     HASH_FIND_STR(active_users, username, result);
@@ -379,6 +388,10 @@ static inline int register_client_connection()
     sprintf(buffer, "!useronline=%s", current_client->username);
     send_bcast(buffer, strlen(buffer)+1, 1, 0);
     ++total_users;
+
+    //Cancel the idle timer
+    cleanup_timer_event(current_client->idle_timer);
+    current_client->idle_timer = NULL;
 
     printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
     return 1;
@@ -466,23 +479,12 @@ static inline int parse_client_command()
 {
     /*Connection related commands*/
 
-    if(strncmp(buffer, "!register:", 10) == 0)
-        return register_client_connection();
-    
-
-    else if(strncmp(buffer, "!xfersend=", 10) == 0)
-        return register_send_transfer_connection();
-    
-    else if(strncmp(buffer, "!xferrecv=", 10) == 0)
-        return register_recv_transfer_connection();
-
-    else if(strcmp(buffer, "!close") == 0)
+    if(strcmp(buffer, "!close") == 0)
     {
         printf("Closing connection with client %s on port %d\n", inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
         disconnect_client(current_client);
         return -1;
     }
-
 
 
     /*Group related Commands*/
@@ -574,6 +576,16 @@ static inline int handle_new_connection()
     //Send a greeting to the client
     if(!send_msg(new_client, "Hello World!", 13))
         return 0;
+
+    //Set a timer that disconnects the unregistered client after a certain period of no registration
+    new_client->idle_timer = calloc(1, sizeof(TimerEvent));
+    new_client->idle_timer->event_type = EXPIRING_UNREGISTERED_CONNECTION;
+    new_client->idle_timer->c = new_client;
+    new_client->idle_timer->timerfd = create_timerfd(UNREGISTERED_CONNECTION_TIMEOUT, 0, timers_epollfd);
+
+    if(!new_client->idle_timer->timerfd)
+        return 0;
+    HASH_ADD_INT(timers, timerfd, new_client->idle_timer);
     
     return 1;
 } 
@@ -591,8 +603,28 @@ static inline int handle_client_msg()
     if(!bytes)
         return 0;
     
-    printf("Received %d bytes from %s:%d : ", bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
-    printf("%.*s\n", bytes, buffer);
+    if(current_client->connection_type == UNREGISTERED_CONNECTION)
+    {
+        printf("Received %d bytes from %s:%d: \"%.*s\"\n", 
+                bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port), bytes, buffer);
+
+        //An unregistered client must register itself before doing anything else.
+        if(strncmp(buffer, "!register:", 10) == 0)
+            return register_client_connection();
+
+        else if(strncmp(buffer, "!xfersend=", 10) == 0)
+            return register_send_transfer_connection();
+        
+        else if(strncmp(buffer, "!xferrecv=", 10) == 0)
+            return register_recv_transfer_connection();
+
+        else
+            disconnect_client(current_client);
+        
+        return 0;
+    }
+
+    printf("Received from %s: \"%.*s\"\n", current_client->username, bytes, buffer);
 
     //Parse as a command if message begins with '!'
     if(buffer[0] == '!')
@@ -660,17 +692,37 @@ static void handle_timer_events()
                 continue;
             }
 
+            //Read the timer counter to silence epoll
             if(!read(current_timer_event->timerfd, &timer_retval, sizeof(uint64_t)))
                 perror("Failed to read timer event.");
-            else
-                printf("Event from user %s. Count=%lu\n", current_timer_event->c->username, timer_retval);
             
-            //TODO: Notify sender of expiry
-            transfer_invite_expired(current_timer_event->c);
+            //Which event type is this?
+            if(current_timer_event->event_type == EXPIRING_UNREGISTERED_CONNECTION)
+            {
+                if(current_timer_event->c->connection_type == UNREGISTERED_CONNECTION)
+                {                    
+                    disconnect_client(current_timer_event->c);
+                    current_timer_event = NULL;
+                }
+            }
+            else if (current_timer_event->event_type == EXPIRING_TRANSFER_REQ)
+            {
+                transfer_invite_expired(current_timer_event->c);
+                current_timer_event = NULL;
+            }
+                
+            
+            else
+                printf("Unknown timer event.\n");
+            
 
             //Cleanup and delete this event once it has occured
-            cleanup_timer_event(current_timer_event);
-            current_timer_event = NULL;
+            if(current_timer_event)
+            {
+                cleanup_timer_event(current_timer_event);
+                current_timer_event = NULL;
+            }
+            
         }
 
         pthread_mutex_unlock(&client_lock);

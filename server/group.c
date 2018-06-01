@@ -170,8 +170,8 @@ void disconnect_client_group_cleanup(Client *c)
     LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
     {
         printf("Disconnect: Leaving group \"%s\"\n", current_group_name->name);
+        
         HASH_FIND_STR(groups, current_group_name->name, group);
-
         if(group)
         {
             leave_group_direct(group, current_client);
@@ -595,7 +595,6 @@ int kick_from_group()
         token = strtok(NULL, ",");
     }
 
-
     //Delete this group if no members are remaining
     if(group->member_count == 0)
     {
@@ -608,7 +607,12 @@ int kick_from_group()
 
 
 //To be done
-int change_group_member_permission(Group *group, User *user, int new_permissions)
+int set_member_permission(Group *group, User *user, int new_permissions)
+{
+    return 0;
+}
+
+int set_group_permission(Group *group, int new_permissions)
 {
     return 0;
 }
@@ -679,7 +683,7 @@ int add_file_to_group(Group *group, char *uploader, char *filename, size_t files
 
     HASH_ADD_INT(group->filelist, fileid, new_file);
 
-    //TODO: Expiry timer
+    //TODO: Expiry timer for files uploaded to groups
 
     sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\".", 
                 new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);

@@ -6,6 +6,7 @@
 
 struct namelist;
 struct filexferargs_server;
+struct timerevent;
 
 enum connection_type {UNREGISTERED_CONNECTION = 0, USER_CONNECTION, TRANSFER_CONNECTION};
 
@@ -30,6 +31,7 @@ typedef struct {
     /*Descriptors for other server components*/
     struct namelist *groups_joined;
     struct filexferargs_server *file_transfers;
+    struct timerevent *idle_timer;
 
     UT_hash_handle hh;
 } Client;
@@ -44,9 +46,9 @@ typedef struct {
 } User;
 
 
-enum timer_event_type {NO_EVENT = 0, EXPIRING_TRANSFER_REQ};
+enum timer_event_type {NO_EVENT = 0, EXPIRING_UNREGISTERED_CONNECTION, EXPIRING_TRANSFER_REQ};
 
-typedef struct {
+typedef struct timerevent{
     int timerfd;
     enum timer_event_type event_type;
     Client *c;

@@ -210,6 +210,12 @@ void cleanup_transfer_connection(Client *c)
 
     Client *target_xfer_connection;
 
+    if(c->connection_type != TRANSFER_CONNECTION)
+    {
+        printf("Trying to kill a non transfer connection\n");
+        return;
+    }
+
     //Check if the transfer connection has been terminated already (usually when the user quits while transferring files)
     if(!xferargs)
     {
@@ -220,7 +226,8 @@ void cleanup_transfer_connection(Client *c)
     printf("Closing transfer connection (%s) for \"%s\"...\n", 
             (xferargs->operation == SENDING_OP)? "SEND":"RECV", xferargs->myself->username);
     
-    xferargs->myself->c->file_transfers = NULL;                 //Also remove the transfer args at my main connection          
+    //Also remove the transfer args at my main connection, if this is a client-client file transfer
+    xferargs->myself->c->file_transfers = NULL;                 
     
     kill_connection(c->socketfd);
     
@@ -234,9 +241,10 @@ void cleanup_transfer_connection(Client *c)
     {
         //Anything else needs to be done, if the target is a group?
         free(xferargs);
+        c->file_transfers = NULL;
         return;
     }
-    
+
 
     target_xferargs = xferargs->target_user->c->file_transfers;
     free(xferargs);
@@ -260,10 +268,14 @@ void cancel_user_transfer(Client *c)
     Client *xfer_connection;
 
     if(!c->file_transfers)
+    {
+        printf("User %s have no pending transfers to cancel.\n", c->username);
         return;
+    }
 
     //If the client already has an ongoing file transfer in progress
-    HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
+    if(c->file_transfers->xfer_socketfd)
+        HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
     if(xfer_connection)
     {
        printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
@@ -275,6 +287,7 @@ void cancel_user_transfer(Client *c)
     //If the client only has pending transfer invites
     if(c->file_transfers->timeout)
         cleanup_timer_event(c->file_transfers->timeout);
+        
 
     free(c->file_transfers);
     c->file_transfers = NULL;
@@ -295,8 +308,7 @@ void transfer_invite_expired(Client *c)
     sprintf(buffer, "!cancelfile=%s,reason=%s", c->username, "Expired");
     send_msg(c->file_transfers->target_user->c, buffer, strlen(buffer)+1);
 
-    free(c->file_transfers);
-    c->file_transfers = NULL;
+    cancel_user_transfer(c);
 }
 
 
@@ -376,8 +388,13 @@ int register_send_transfer_connection()
     send_msg(current_client, buffer, strlen(buffer)+1);
     printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
             xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
-    
+
     update_epoll_events(connections_epollfd, current_client->socketfd, XFER_SENDER_EPOLL_EVENTS);
+
+    //Cancel the idle timer
+    cleanup_timer_event(current_client->idle_timer);
+    current_client->idle_timer = NULL;
+
     return 0;
 }
 
@@ -444,6 +461,11 @@ int register_recv_transfer_connection()
             xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
     update_epoll_events(connections_epollfd, current_client->socketfd, XFER_RECVER_EPOLL_EVENTS);
+
+    //Cancel the idle timer
+    cleanup_timer_event(current_client->idle_timer);
+    current_client->idle_timer = NULL;
+
     return 0;
 }
 
@@ -736,6 +758,7 @@ int put_new_file_to_group()
     //Generate an unique token for this transfer
     generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
     
+    xferargs->myself = get_current_client_user();
     xferargs->operation = SENDING_OP;
     xferargs->target_type = GROUP_TARGET; 
     current_client->file_transfers = xferargs;
@@ -769,7 +792,7 @@ int get_new_file_from_group()
     sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
 
     //Check if group exists and user is a member
-    if(!basic_group_permission_check(target_name, &xferargs->target_group, NULL))
+    if(!basic_group_permission_check(target_name, &xferargs->target_group, &target_member))
     {
         free(xferargs);
         return 0;
@@ -802,6 +825,8 @@ int get_new_file_from_group()
     strcpy(xferargs->filename, requested_file->filename);
     xferargs->filesize = requested_file->filesize;
     xferargs->checksum = requested_file->checksum;
+
+    xferargs->myself = get_current_client_user();
     xferargs->operation = RECVING_OP;
     xferargs->target_type = GROUP_TARGET; 
     current_client->file_transfers = xferargs;
@@ -838,13 +863,14 @@ static int group_send_next_piece()
     size_t bytes_remaining = xferargs->filesize - xferargs->transferred;
     int bytes_sent;
     
-    bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], bytes_remaining);
-    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
+    //bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], bytes_remaining);
+    bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
     if(bytes_sent < 0)
     {
         perror("Failed to send the current piece");
         return -1;
     }
+    //sleep(1);
 
     printf("Sent %d bytes\n", bytes_sent);
     xferargs->transferred += bytes_sent;

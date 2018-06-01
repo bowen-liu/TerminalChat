@@ -431,7 +431,10 @@ static inline void client_main_loop()
 
                 //Transmit the line read from stdin to the server
                 if(!send_msg(buffer, strlen(buffer)+1))
+                {
+                    perror("Failed to transmit message to server.");
                     return;
+                }
             }
             
             //Message from Server

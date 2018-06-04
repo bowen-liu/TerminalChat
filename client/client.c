@@ -106,16 +106,14 @@ static void recv_long_msg()
     {
         sscanf(buffer, "%s ", header);
         sscanf(header, "!longmsg=%zu", &expected_long_size);
-        expected_long_size += strlen(header) + 1;
-        
-        printf("Expecting a long message from the server, size: %zu\n", expected_long_size);
         
         pending_long_msg = 1;
+        expected_long_size += strlen(header) + 1;
         received_long = last_received;
+
+        //Copy the last received chunk into the start of the long buffer
         long_buffer = malloc(expected_long_size);
         memcpy(long_buffer, buffer, last_received);
-
-        printf("Initial chunk (%zu): %.*s\n", received_long, (int)received_long, long_buffer);
         return;
     }
 
@@ -129,23 +127,21 @@ static void recv_long_msg()
     }
     else
     {
-        printf("Received chunk (%d): %.*s\n", bytes, (int)bytes, &long_buffer[received_long-1]);
-
         received_long += bytes;
-        printf("Current Buffer: %.*s\n", (int)received_long, long_buffer);
-        printf("%zu\\%zu bytes received\n", received_long, expected_long_size);
 
         //Has the entire message been received?
         if(received_long < expected_long_size)
             return;
-        printf("Completed long recv\n");
 
         //Extract the long command after the !longmsg header
         longcmd = strchr(long_buffer, ' ');
         if(longcmd)
             parse_control_message(&longcmd[1]);
         else
-            printf("Long message is malformed or does not contain a further control message\n");
+        {
+            //printf("Long message is malformed or does not contain a further control message\n");
+            printf("%.*s", (int)expected_long_size, long_buffer );
+        }   
     }
 
     //Free resources used for the long recv
@@ -292,7 +288,7 @@ static void parse_userlist()
     if(strncmp(token, "group=", 6) == 0)
     {
         sscanf(token, "group=%[^,]", group_name);
-        printf("%u users are currently online in the group \"%s\":\n", users_online, group_name);
+        printf("%u user(s) are currently online in the group \"%s\":\n", users_online, group_name);
         token = strtok(NULL, ",");
     }
 

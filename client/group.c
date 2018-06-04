@@ -94,7 +94,7 @@ int parse_filelist()
 
     //Parse the header
     sscanf(buffer, "!filelist=%u,group=%[^,],%n", &file_count, group_name, &header_len);
-    printf("%u files are available for download in the group \"%s\":\n", file_count, group_name);
+    printf("%u file(s) are available for download in the group \"%s\":\n", file_count, group_name);
 
     current_fileinfo_idx = header_len;
     

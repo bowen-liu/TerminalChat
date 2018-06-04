@@ -691,3 +691,10 @@ int add_file_to_group(Group *group, char *uploader, char *filename, size_t files
     send_group(group, new_file_msg, strlen(new_file_msg)+1);
     return new_file->fileid;
 }
+
+int remove_file_from_group(Group *group, char *filename)
+{
+    File_List *requested_file;
+
+    return 1;
+}

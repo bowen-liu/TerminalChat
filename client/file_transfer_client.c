@@ -277,8 +277,8 @@ static int recver_accepted_file(char* buffer)
         return 0;
     }
 
-    printf("Receiver \"%s\" has accepted to receive the file \"%s\" (%zu bytes, token: %s, checksum: %x)!\n",
-            accepted_filename, accepted_target_name, accepted_filesize, accepted_token, accepted_checksum);
+    printf("Receiver \"%s\" has accepted to receive the file \"%s\" (%zu bytes, checksum: %x)!\n",
+            accepted_target_name, accepted_filename, accepted_filesize, accepted_checksum);
     
     //Record the server assigned token
     strcpy(file_transfers->token, accepted_token);
@@ -351,8 +351,7 @@ int file_send_next(FileXferArgs *args)
     }
 
     args->transferred += bytes;
-    //printf("Sent %zu\\%zu bytes to client \"%s\"\n", args->transferred, args->filesize, args->target_name);
-    //sleep(1);
+    sleep(1);
 
     if(args->transferred < args->filesize)
         return bytes;

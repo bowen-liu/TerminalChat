@@ -86,7 +86,7 @@ int name_is_valid(char* name)
         return 0;
     }
     
-    if(name_leng > name_LENG)
+    if(name_leng > USERNAME_LENG)
     {
         printf("Name is too long.\n");
         return 0;

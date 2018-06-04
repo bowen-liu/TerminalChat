@@ -12,6 +12,8 @@ char *buffer;
 static size_t buffer_size = BUFSIZE;
 static size_t last_received;
 
+
+//Buffers for long messages from server
 static int pending_long_msg = 0;
 static char *long_buffer;
 static size_t expected_long_size;
@@ -158,10 +160,13 @@ static void recv_long_msg()
 /*   Client-side Operations   */
 /******************************/
 
+static void parse_userlist();
 static int register_with_server()
 {   
-    
-    //Receive a greeting message from the server
+    /*This function is called right after a connection to the server is made, and before the connection is registered to epoll. 
+    Therefore, all send/recv here are still blocking, and thus all actions done here are synchronous. */
+
+    //Receive a greeting message from the server upon connecting to the server
     if(!recv_msg(buffer, BUFSIZE))
         return 0;
     printf("%s\n", buffer);
@@ -181,13 +186,54 @@ static int register_with_server()
     {
         sscanf(&buffer[19], "%s", my_username);
         printf("Registered with server as \"%s\"\n", my_username);
-
-        //Request a list of active users from the server. The response will be handled once main loop starts
-        strcpy(buffer, "!userlist");
-        if(!send_msg(buffer, strlen(buffer)+1))
-            return 0;
-        return 1;
     }
+    else
+        goto register_with_server_failed;
+
+
+    /************************************/
+    /* Get the current active user list */
+    /************************************/
+
+    //Request a list of active users from the server
+    strcpy(buffer, "!userlist");
+    if(!send_msg(buffer, strlen(buffer)+1))
+        return 0;
+    
+    //Wait for server to reply
+    if(!recv_msg(buffer, BUFSIZE))
+        return 0;
+    
+    //Parse the returned userlist
+    if(strncmp(buffer, "!userlist=", 10) == 0)
+        parse_userlist();
+    else
+        goto register_with_server_failed;
+
+    
+
+    /************************************/
+    /*     Join the main chat lobby     */
+    /************************************/
+
+    //Request a list of active users from the server
+    sprintf(buffer, "!joingroup=%s", LOBBY_GROUP_NAME);
+    if(!send_msg(buffer, strlen(buffer)+1))
+        return 0;
+    
+    //Wait for server to reply
+    if(!recv_msg(buffer, BUFSIZE))
+        return 0;
+    
+    //Parse the returned userlist
+    if(strncmp(buffer, "!groupjoined=", 10) == 0)
+    {
+        group_joined();
+        return 1;
+    }   
+
+
+register_with_server_failed:
 
     //Something went wrong and server doesn't want me to join :(
     printf("Server rejected registration: \"%s\"\n", buffer);

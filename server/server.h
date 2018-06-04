@@ -6,9 +6,10 @@
 #include "file_transfer_server.h"
 
 
-#define UNREGISTERED_CONNECTION_TIMEOUT 30
-#define CLIENT_EPOLL_DEFAULT_EVENTS (EPOLLRDHUP | EPOLLIN)
+#define UNREGISTERED_CONNECTION_TIMEOUT     30
+#define CLIENT_EPOLL_DEFAULT_EVENTS         (EPOLLRDHUP | EPOLLIN)
 
+#define ADMIN_USERNAME                      ((const char*) "ADMIN")
 
 
 /*Shared Server Variables*/

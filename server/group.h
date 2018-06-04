@@ -12,6 +12,7 @@
 
 #define GRP_PERM_DEFAULT        (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE)
 #define GRP_PERM_ADMIN          (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
+#define LOBBY_USER_PERM         (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK)
 
 
 /*Permission flags for individual groups*/
@@ -19,6 +20,7 @@
 #define GRP_FLAG_ALLOW_XFER     0x2
 
 #define GRP_FLAG_DEFAULT        (GRP_FLAG_ALLOW_XFER)
+#define LOBBY_FLAGS             0
 
 
 
@@ -50,7 +52,6 @@ typedef struct {
 typedef struct group {
     char groupname[USERNAME_LENG+1];
     Group_Member *members;
-    unsigned int member_count;
     int group_flags;
     
     //For group file sharing
@@ -61,10 +62,20 @@ typedef struct group {
 } Group;
 
 
+
+extern Group *groups;                   
+extern Group *lobby;  
+
+
+
+int init_group_module();
+
+unsigned int send_lobby(Client *c, char* buffer, size_t size);
 unsigned int send_group(Group* group, char* buffer, size_t size);
 int group_msg();
 void disconnect_client_group_cleanup(Client *c);
 int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
+Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions);
 
 int userlist_group(char *group_name);
 int create_new_group();

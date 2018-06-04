@@ -11,7 +11,6 @@ int connections_epollfd;
 
 //Receive buffers
 char *buffer;
-size_t buffer_size = BUFSIZE;
 
 //Event Timers
 TimerEvent *timers = NULL; 
@@ -23,7 +22,6 @@ pthread_t timer_event_thread;
 //Keeping track of clients
 Client *active_connections = NULL;                  //Hashtable of all active client sockets (key = socketfd)
 User *active_users = NULL;                          //Hashtable of all active users (key = username), mapped to their client descriptors
-Group *groups = NULL;                               //Hashtable of all user created private chatrooms (key = groupname)                      
 unsigned int total_users = 0;    
 
 //Client/Event being served right now
@@ -133,21 +131,7 @@ static void exit_cleanup()
 /*     Basic Send/Receive     */
 /******************************/
 
-//TODO: Handle partial sends
-/*unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
-{
-    int sent, sent_total = 0;
-
-    while(sent_total < size)
-    {
-        sent = send(socketfd, buffer, size, 0);
-
-        if(!sent)
-            return sent;  
-        sent_total += sent;
-    }
-    return sent_total;
-}*/
+//TODO: Handle partial sends for regular messages?
 
 unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
 {
@@ -180,7 +164,6 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
     
     return bytes;
 }
-
 
 unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
 {
@@ -218,7 +201,6 @@ static void send_long_msg()
      
     //Send the next chunk to the client
     bytes = send_msg_direct(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size);
-    printf("Sending chunk (%d): %.*s\n", bytes, bytes, &current_client->pending_buffer[current_client->pending_processed]);
 
     //Check exit conditions
     if(bytes <= 0)
@@ -229,8 +211,6 @@ static void send_long_msg()
     else
     {
         current_client->pending_processed += bytes;
-        printf("Sent %zu\\%zu bytes to client \"%s\"\n", current_client->pending_processed, current_client->pending_size, current_client->username);
-
         if(current_client->pending_processed < current_client->pending_size)
             return;
     }
@@ -264,8 +244,6 @@ void send_new_long_msg(char* buffer, size_t size)
     sprintf(newbuffer, "!longmsg=%zu ", size);
     header_size = strlen(newbuffer);
     strcat(newbuffer, buffer);
-
-    printf("New Long Message (h: %zu m: %zu): \"%s\"\n", header_size, size, newbuffer);
 
     //Start the operation
     current_client->pending_buffer = newbuffer;
@@ -303,11 +281,10 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
 /*      Client Operations     */
 /******************************/
 
-
 static inline int register_client_connection()
 {
     char *username = malloc(USERNAME_LENG+1);
-    User *result;
+    User *registered_user;
 
     char *new_username;
     int duplicates = 0, max_duplicates_allowed;
@@ -326,11 +303,14 @@ static inline int register_client_connection()
         disconnect_client(current_client);
         return 0;
     }
-        
+
+    //Cancel the unregistered idle timer
+    cleanup_timer_event(current_client->idle_timer);
+    current_client->idle_timer = NULL;
     
     //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
-    HASH_FIND_STR(active_users, username, result);
-    while(result != NULL)
+    HASH_FIND_STR(active_users, username, registered_user);
+    while(registered_user != NULL)
     {
         if(duplicates == 0)
         {
@@ -360,7 +340,7 @@ static inline int register_client_connection()
 
         //Test if the new name with a newly appended value is used
         sprintf(new_username, "%s_%d", username, duplicates);
-        HASH_FIND_STR(active_users, new_username, result);
+        HASH_FIND_STR(active_users, new_username, registered_user);
     }
 
     if(duplicates)
@@ -371,10 +351,10 @@ static inline int register_client_connection()
     }
 
     //Register the client's requested username
-    result = malloc(sizeof(User));
-    result->c = current_client;
-    strcpy(result->username, username);
-    HASH_ADD_STR(active_users, username, result);
+    registered_user = malloc(sizeof(User));
+    registered_user->c = current_client;
+    strcpy(registered_user->username, username);
+    HASH_ADD_STR(active_users, username, registered_user);
 
     //Update the client descriptor
     current_client->connection_type = USER_CONNECTION;
@@ -384,16 +364,14 @@ static inline int register_client_connection()
     printf("Registering user \"%s\"\n", current_client->username);
     sprintf(buffer, "!regreply:username=%s", current_client->username);
     send_msg(current_client, buffer, strlen(buffer)+1);
-    
+
+    //Announce to all online users that a new user has joined
     sprintf(buffer, "!useronline=%s", current_client->username);
     send_bcast(buffer, strlen(buffer)+1, 1, 0);
     ++total_users;
 
-    //Cancel the idle timer
-    cleanup_timer_event(current_client->idle_timer);
-    current_client->idle_timer = NULL;
-
     printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
+    
     return 1;
 }
 
@@ -639,16 +617,14 @@ static inline int handle_client_msg()
             return client_pm();
     }
 
-    //Broadcast regular messages to all other active clients
-    else
-        send_bcast(buffer, buffer_size, 0, 1);
-        
-    return 1;
+    //If a regular message has no target, broadcast it to the lobby group 
+    return send_lobby(current_client, buffer, strlen(buffer)+1);
 }
 
 
 static inline int handle_stdin()
 {
+    size_t buffer_size = BUFSIZE;
     int bytes; 
 
     //Read from stdin and remove the newline character
@@ -869,6 +845,9 @@ void server(const char* hostname, const unsigned int port)
     /*Register stdin (fd = 0) to the epoll list*/
     if(!register_fd_with_epoll(connections_epollfd, 0, EPOLLIN))
         return;   
+
+    /*Initialize other server components before listening for connections*/
+    init_group_module();
 
     /*Begin listening for incoming connections on the server socket*/
     if(listen(server_socketfd, MAX_CONNECTION_BACKLOG) < 0)

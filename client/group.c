@@ -139,7 +139,7 @@ int leaving_group()
     if(!current_group_name)
     {
         printf("You do not appear to be a member of the group \"%s\".\n", groupname);
-        return 0;
+        return 1;       //Send the leave command to server anyways, just in case if we didn't record the join
     }
 
     printf("You have left the group \"%s\".\n", groupname);

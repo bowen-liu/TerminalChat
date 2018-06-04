@@ -198,7 +198,7 @@ int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *fi
     int retval;
     
     //Make a receiving folder from the target user, if it does not exist
-    retval = mkdir(root_dir, 0666);
+    retval = mkdir(root_dir, LOCAL_FOLDER_PERMISSION);
     if(retval < 0 && errno != EEXIST)
     {
         perror("Failed to create directory for receiving.");
@@ -206,7 +206,7 @@ int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *fi
     }
  
     sprintf(recvpath, "%s/%s", root_dir, target_name);
-    retval = mkdir(recvpath, 0666);
+    retval = mkdir(recvpath, LOCAL_FOLDER_PERMISSION);
     if(retval < 0 && errno != EEXIST)
     {
         perror("Failed to create directory for receiving.");
@@ -301,3 +301,17 @@ int verify_received_file(size_t expected_size, unsigned int expected_crc, char* 
     printf("Received file \"%s\" is intact. Size: %zu, Checksum: %x\n", filepath, fileinfo.st_size, received_crc);
     return 1;
 }
+
+/*void parse_target_command(char* buffer, char *target, char *msg, int *target_is_group)
+{
+    char space = strchar(buffer, ' ');
+    if(!space)
+    {
+        &target = '\0';
+        &target_is_group = 0;
+    }
+    //else if()
+
+    strcpy()
+
+}*/

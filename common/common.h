@@ -24,6 +24,7 @@
 
 
 #define DEFAULT_SERVER_PORT     6996
+#define LOBBY_GROUP_NAME        ((const char*) "all")
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
 #define BUFSIZE                 4096                                //Buffer size used to hold a single received message
@@ -39,6 +40,8 @@
 #define TRANSFER_TOKEN_SIZE     16
 #define CRC_INIT                0xffffffff
 #define XFER_REQUEST_TIMEOUT    600                                  //seconds
+
+#define LOCAL_FOLDER_PERMISSION 600
 
 
 enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};

@@ -2,6 +2,35 @@
 #include "group.h"
 #include "server.h"
 
+
+Group *groups = NULL;                               //Hashtable of all user created private chatrooms (key = groupname)                      
+Group *lobby = NULL;                                //Lobby group for untargeted messages
+char *bcast_buffer;                                 //buffer used to broadcast messages to the lobby
+
+
+/******************************/
+/*         Initialization         */
+/******************************/
+
+void create_lobby_group()
+{
+    lobby = calloc(1, sizeof(Group));
+
+    strcpy(lobby->groupname, LOBBY_GROUP_NAME);
+    lobby->group_flags = LOBBY_FLAGS;
+
+    HASH_ADD_STR(groups, groupname, lobby);
+}
+
+int init_group_module()
+{
+    groups = NULL;
+    create_lobby_group();
+    bcast_buffer = malloc(BUFSIZE);
+
+    return 1;
+}
+
 /******************************/
 /*         Group Send         */
 /******************************/
@@ -24,6 +53,18 @@ unsigned int send_group(Group* group, char* buffer, size_t size)
     }
 
     return members_sent;
+}
+
+unsigned int send_lobby(Client *c, char* buffer, size_t size)
+{
+    Group_Member *sending_member;
+
+    HASH_FIND_STR(lobby->members, c->username, sending_member);
+    if(!sending_member)
+        return 0;
+    
+    sprintf(bcast_buffer, "%s (%s): %s", c->username, lobby->groupname, buffer);
+    send_group(lobby, bcast_buffer, strlen(bcast_buffer)+1);
 }
 
 int group_msg()
@@ -82,7 +123,7 @@ int group_msg()
 /******************************/
 
 
-static Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions)
+Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions)
 {
     Group_Member *newmember;
     Namelist *newgroup_entry;
@@ -119,7 +160,7 @@ static void remove_group(Group *group)
     
     if(mcount > 0)
     {
-        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d, member_count: %d) \n", group->groupname, mcount, group->member_count);
+        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d) \n", group->groupname, mcount);
         
         //Remove any remaining member objects
         HASH_ITER(hh, group->members, cur_member, tmp_member) 
@@ -226,12 +267,14 @@ int userlist_group(char *group_name)
 
     Group *group = NULL;
     Group_Member *curr, *temp;
+    int mcount;
     
     if(!basic_group_permission_check(group_name, &group, NULL))
         return 0;
 
-    userlist_msg = malloc(group->member_count * (USERNAME_LENG+1 + 128));
-    sprintf(userlist_msg, "!userlist=%d,group=%s", group->member_count, group_name);
+    mcount = HASH_COUNT(group->members);
+    userlist_msg = malloc(mcount * (USERNAME_LENG+1 + 128));
+    sprintf(userlist_msg, "!userlist=%d,group=%s", mcount, group_name);
 
     //Iterate through the list of active usernames and append them to the buffer one at a time
     HASH_ITER(hh, group->members, curr, temp)
@@ -251,7 +294,7 @@ int userlist_group(char *group_name)
     send_new_long_msg(userlist_msg, userlist_size);
     free(userlist_msg);
 
-    return group->member_count;
+    return mcount;
 }
 
 
@@ -340,8 +383,6 @@ int leave_group_direct(Group *group, Client *c)
     //No need to announce member leaving if the member never joined the group (unresponded invite)
     if(has_joined)
     {
-        --group->member_count;
-
         sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
         printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
         send_group(group, leavemsg, strlen(leavemsg)+1);
@@ -350,7 +391,7 @@ int leave_group_direct(Group *group, Client *c)
         printf("User \"%s\"'s unresponded invite has been removed from the group \"%s\".\n", c->username, group->groupname);
 
     //Delete this group if no members are remaining
-    if(group->member_count == 0)
+    if(HASH_COUNT(group->members) == 0 && strcmp(group->groupname, LOBBY_GROUP_NAME) != 0)
     {
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);
@@ -430,7 +471,12 @@ int join_group()
     else
     {
         if(!(group->group_flags & GRP_FLAG_INVITE_ONLY))
-            newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
+        {
+            if(group == lobby)
+                newmember = allocate_group_member(lobby, current_client, LOBBY_USER_PERM);
+            else
+                newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
+        }
         else
         {
             printf("User \"%s\" wanted to join group \"%s\", but it's invite only.\n", current_client->username, group->groupname);
@@ -438,14 +484,12 @@ int join_group()
             return 0;
         }
     }
-        
 
     printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
-    ++group->member_count;
 
     //Inform the new member that the join was sucessful
     sprintf(buffer, "!groupjoined=%s", group->groupname);
-    if(!send_msg(current_client, buffer, strlen(buffer)+1))       //TODO: what if send failed?
+    if(!send_msg(current_client, buffer, strlen(buffer)+1))
         return 0;
 
     //Announce to other existing members that a new member has joined the group
@@ -569,7 +613,6 @@ int kick_from_group()
 
         //Remove the member from the group's member table
         HASH_DEL(group->members, target_member);
-        --group->member_count;
 
         //Find the entry in the client's group_joined list and remove the entry
         group_entry = find_from_namelist(target_member->c->groups_joined, group_name);
@@ -596,7 +639,7 @@ int kick_from_group()
     }
 
     //Delete this group if no members are remaining
-    if(group->member_count == 0)
+    if(HASH_COUNT(group->members) == 0)
     {
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);

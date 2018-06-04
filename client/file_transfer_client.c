@@ -339,8 +339,8 @@ int file_send_next(FileXferArgs *args)
     int bytes;
      
     //Send the next chunk to the client
-    //bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], remaining_size);
-    bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
+    bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], remaining_size);
+    //bytes = send_direct_client(args->socketfd, &args->file_buffer[args->transferred], (remaining_size < RECV_CHUNK_SIZE)? remaining_size:RECV_CHUNK_SIZE);
 
     if(bytes <= 0)
     {
@@ -351,7 +351,7 @@ int file_send_next(FileXferArgs *args)
     }
 
     args->transferred += bytes;
-    sleep(1);
+    //sleep(1);
 
     if(args->transferred < args->filesize)
         return bytes;

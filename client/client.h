@@ -16,6 +16,9 @@ extern char* my_username;
 
 
 extern char *buffer;
+extern char *msg_target;
+extern char *msg_body;
+
 
 unsigned int send_direct_client(int socket, char* buffer, size_t size);
 unsigned int send_msg_client(int socket, char* buffer, size_t size);

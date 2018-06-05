@@ -69,9 +69,9 @@ int file_recv_next(FileXferArgs *args);
 
 /*Handle Server control messages*/
 int incoming_file();
+int recver_accepted_file();
 int rejected_file_sending();
 void file_transfer_cancelled();
-int begin_file_sending();
 int incoming_group_file();
 
 

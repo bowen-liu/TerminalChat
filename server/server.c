@@ -11,6 +11,8 @@ int connections_epollfd;
 
 //Receive buffers
 char *buffer;
+char *msg_target;                                   //msg_target and msg_body points to sections in buffer. Do not write to these!
+char *msg_body;
 
 //Event Timers
 TimerEvent *timers = NULL; 
@@ -378,40 +380,30 @@ static inline int register_client_connection()
 
 static inline int client_pm()
 {
-    char *target_username;
-    char *target_msg;
     char pmsg[MAX_MSG_LENG];
     User *target;
 
-    //Find the occurance of the first space
-    target_msg = strchr(buffer, ' ');
-    if(!target_msg)
-    {
-        printf("Invalid username specified, or no message specified\n");
+    //Do nothing if there is no message body
+    if(!msg_body)
         return 0;
-    }
-
-    //Seperate the target's name and message from the buffer
-    target_username = &buffer[1];
-    target_msg[0] = '\0';              //Mark the space separating the username and message as NULL, so we can directly read the username from the pointer
-    target_msg += sizeof(char);        //Increment the message pointer by 1 to skip to the actual message
+    ++msg_target;
 
     //Find if anyone with the requested username is online
-    HASH_FIND_STR(active_users, target_username, target);
+    HASH_FIND_STR(active_users, msg_target, target);
     if(!target)
     {
-        printf("User \"%s\" not found\n", target_username);
+        printf("User \"%s\" not found\n", msg_target);
         send_msg(current_client, "UserNotFound", 13);
         return 0;
     }
 
     //Forward message to the target
-    sprintf(pmsg, "%s (PM): %s", current_client->username, target_msg);
+    sprintf(pmsg, "%s (PM): %s", current_client->username, msg_body);
     if(!send_msg(target->c, pmsg, strlen(pmsg)+1))
         return 0;
 
     //Echo back to the sender
-    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, target_username, target_msg);
+    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, msg_target, msg_body);
     if(!send_msg(current_client, pmsg, strlen(pmsg)+1))
         return 0;
     
@@ -425,13 +417,11 @@ static inline int userlist()
     size_t userlist_size = 0;
     User *curr, *temp;
 
-    char group_name[USERNAME_LENG+1];
-
     //Is the user requesting a userlist of a group, or a userlist of everyone online?
-    if(strncmp(buffer, "!userlist,group=", 16) == 0)
+    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
     {
-        sscanf(buffer, "!userlist,group=%s", group_name);
-        return userlist_group(group_name);
+        msg_target += 2;
+        return userlist_group(msg_target);
     }
 
     userlist_msg = malloc(total_users * (USERNAME_LENG+1 + 128));
@@ -457,7 +447,7 @@ static inline int parse_client_command()
 {
     /*Connection related commands*/
 
-    if(strcmp(buffer, "!close") == 0)
+    if(strcmp(msg_body, "!close") == 0)
     {
         printf("Closing connection with client %s on port %d\n", inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
         disconnect_client(current_client);
@@ -467,52 +457,52 @@ static inline int parse_client_command()
 
     /*Group related Commands*/
 
-    else if(strncmp(buffer, "!userlist", 9) == 0)
+    else if(strncmp(msg_body, "!userlist", 9) == 0)
         return userlist();
 
-    else if(strncmp(buffer, "!newgroup=", 10) == 0)
+    else if(strncmp(msg_body, "!newgroup", 9) == 0)
         return create_new_group();
 
-    else if(strncmp(buffer, "!joingroup=", 11) == 0)
+    else if(strcmp(msg_body, "!joingroup") == 0)
         return join_group();
 
-    else if(strncmp(buffer, "!leavegroup=", 12) == 0)
+    else if(strcmp(msg_body, "!leavegroup") == 0)
         return leave_group();
 
-    else if(strncmp(buffer, "!invitegroup=", 13) == 0)
+    else if(strncmp(msg_body, "!invitegroup,", 13) == 0)
         return invite_to_group();
 
-    else if(strncmp(buffer, "!kickgroup=", 11) == 0)
+    else if(strncmp(msg_body, "!kickgroup,", 10) == 0)
         return kick_from_group();
 
 
     /*File Transfer Commands*/
-    else if(strncmp(buffer, "!sendfile=", 10) == 0)
+    else if(strncmp(msg_body, "!sendfile=", 10) == 0)
         return new_client_transfer();
 
-    else if(strncmp(buffer, "!acceptfile=", 12) == 0)
+    else if(strncmp(msg_body, "!acceptfile=", 12) == 0)
         return accepted_file_transfer();
 
-    else if(strncmp(buffer, "!rejectfile=", 12) == 0)
+    else if(strncmp(msg_body, "!rejectfile=", 12) == 0)
         return rejected_file_transfer();
 
-    else if(strncmp(buffer, "!cancelfile", 11) == 0)
+    else if(strncmp(msg_body, "!cancelfile", 11) == 0)
         return user_cancelled_transfer();
 
     /*File Transfer for Groups*/
-    else if(strncmp(buffer, "!filelist=", 10) == 0)
+    else if(strcmp(msg_body, "!filelist") == 0)
         return group_filelist();
 
-    else if(strncmp(buffer, "!putfile=", 9) == 0)
+    else if(strncmp(msg_body, "!putfile=", 9) == 0)
         return put_new_file_to_group();
 
-    else if(strncmp(buffer, "!getfile=", 9) == 0)
+    else if(strncmp(msg_body, "!getfile=", 9) == 0)
         return get_new_file_from_group();
     
     
     else
     {
-        printf("Invalid command \"%s\"\n", buffer);
+        printf("Invalid command \"%s\"\n", msg_body);
         send_msg(current_client, "InvalidCmd.", 12);
         return 0;
     }
@@ -603,15 +593,16 @@ static inline int handle_client_msg()
     }
 
     printf("Received from %s: \"%.*s\"\n", current_client->username, bytes, buffer);
+    seperate_target_command(buffer, &msg_target, &msg_body);
 
     //Parse as a command if message begins with '!'
-    if(buffer[0] == '!')
+    if(msg_body && msg_body[0] == '!')
         return parse_client_command();
 
     //Private messaging between two users if message starts with "@". Group message if message starts with "@@"
-    else if(buffer[0] == '@')
+    else if(msg_target && msg_target[0] == '@')
     {
-        if(buffer[1] == '@')
+        if(msg_target[1] == '@')
             return group_msg();
         else
             return client_pm();
@@ -847,7 +838,7 @@ void server(const char* hostname, const unsigned int port)
         return;   
 
     /*Initialize other server components before listening for connections*/
-    init_group_module();
+    create_lobby_group();
 
     /*Begin listening for incoming connections on the server socket*/
     if(listen(server_socketfd, MAX_CONNECTION_BACKLOG) < 0)

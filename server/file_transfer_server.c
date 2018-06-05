@@ -432,6 +432,10 @@ int new_client_transfer()
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
 
+    /*if(!msg_target)
+        return 0;
+    ++msg_target;*/
+
     sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
 
@@ -695,14 +699,17 @@ int client_data_forward_sender_ready()
 int put_new_file_to_group()
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
-    char target_name[USERNAME_LENG+1];
     Group_Member *target_member;
+
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
     
-    sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x,target=%s", 
-            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
+    sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x", 
+            xferargs->filename, &xferargs->filesize, &xferargs->checksum);
 
     //Check if group exists and user is a member
-    if(!basic_group_permission_check(target_name, &xferargs->target_group, &target_member))
+    if(!basic_group_permission_check(msg_target, &xferargs->target_group, &target_member))
     {
         free(xferargs);
         return 0;
@@ -711,7 +718,7 @@ int put_new_file_to_group()
     //Check if group allows file transfers and the user has such permission.
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_PUTFILE) )
     {
-        printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->username, target_name);
+        printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->username, msg_target);
         send_msg(current_client, "NoPermission", 13);
         free(xferargs);
         return 0;
@@ -745,16 +752,19 @@ int put_new_file_to_group()
 int get_new_file_from_group()
 {
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
-    char target_name[USERNAME_LENG+1];
     Group_Member *target_member;
     
     File_List *requested_file;
     unsigned int requested_fileid;
+
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
     
-    sscanf(buffer, "!getfile=%u,target=%s", &requested_fileid, target_name);
+    sscanf(buffer, "!getfile=%u", &requested_fileid);
 
     //Check if group exists and user is a member
-    if(!basic_group_permission_check(target_name, &xferargs->target_group, &target_member))
+    if(!basic_group_permission_check(msg_target, &xferargs->target_group, &target_member))
     {
         free(xferargs);
         return 0;
@@ -763,7 +773,7 @@ int get_new_file_from_group()
     //Check if group allows file transfers and the user has such permission.
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
     {
-        printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->username, target_name);
+        printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->username, msg_target);
         send_msg(current_client, "NoPermission", 13);
         free(xferargs);
         return 0;

@@ -19,7 +19,9 @@ extern struct sockaddr_in server_addr;
 extern int connections_epollfd;
 
 extern char *buffer;
-extern size_t buffer_size;
+extern char *msg_target;
+extern char *msg_body;
+
 
 extern Client *active_connections;                  //Hashtable of all active client sockets (key = socketfd)
 extern User *active_users;                          //Hashtable of all active users (key = username), mapped to their client descriptors

@@ -302,16 +302,29 @@ int verify_received_file(size_t expected_size, unsigned int expected_crc, char* 
     return 1;
 }
 
-/*void parse_target_command(char* buffer, char *target, char *msg, int *target_is_group)
+//The target buffer will terminate at the message target, while the returned pointer contains rest of the command
+void seperate_target_command(char* buffer, char** msg_target_ret, char** msg_body_ret)
 {
-    char space = strchar(buffer, ' ');
-    if(!space)
+    char *space;
+
+    //Check if the message has a target
+    if(buffer[0] == '@')
+        *msg_target_ret = &buffer[0];
+    else
     {
-        &target = '\0';
-        &target_is_group = 0;
+        *msg_target_ret = NULL;
+        *msg_body_ret = &buffer[0];
+        return;
     }
-    //else if()
-
-    strcpy()
-
-}*/
+        
+    
+    //Seperate the body with the target
+    space = strchr(buffer, ' ');
+    if(!space)
+        *msg_body_ret = NULL; 
+    else
+    {
+        *space = '\0';
+        *msg_body_ret = space + 1;
+    }
+}

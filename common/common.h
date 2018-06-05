@@ -68,5 +68,7 @@ int create_timerfd(int period_sec, int is_periodic, int epoll_fd);
 int make_folder_and_file_for_writing(char* root_dir, char* target_name, char *filename, char* target_file_ret, FILE **file_fp_ret);
 int verify_received_file(size_t expected_size, unsigned int expected_crc, char* filepath);
 
+void seperate_target_command(char* buffer, char** msg_target_ret, char** msg_body_ret);
+
 
 #endif

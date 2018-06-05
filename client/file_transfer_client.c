@@ -163,16 +163,16 @@ static unsigned int delete_pending_xfer(char *sender_name)
 //Used by the sending client locally to parse its command into a FileXferArgs struct
 static void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_is_group)
 {
-    //You must fill args->socketfd before or after you call this function
-
     char *filename_start;
 
     memset(args, 0 ,sizeof(FileXferArgs));
 
     if(target_is_group)
-        sscanf(buffer, "!putfile=%[^,],target=%s", args->target_file, args->target_name);
+        sscanf(buffer, "!putfile=%[^,]", args->target_file);
     else
-        sscanf(buffer, "!sendfile=%[^,],target=%s", args->target_file, args->target_name);
+        sscanf(buffer, "!sendfile=%[^,]", args->target_file);
+    
+    strcpy(args->target_name, msg_target);
 
     //Extract the filename from the target file path
     filename_start = strrchr(args->target_file, '/');
@@ -242,6 +242,10 @@ static int new_send_cmd(FileXferArgs *args)
             file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name);
     printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes, checksum: %x)\n", 
             file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
+
+    //Since we're overwriting the original buffer, we must prevent the command handler from trying to concanate msg_target and msg_body together
+    msg_target = NULL;
+    msg_body = buffer;
     
     //The new message in buffer will be sent automatically when this function returns back to client_main_loop()
 
@@ -249,7 +253,7 @@ static int new_send_cmd(FileXferArgs *args)
 }
 
 
-static int recver_accepted_file(char* buffer)
+int recver_accepted_file()
 {
     char accepted_filename[FILENAME_MAX+1];
     size_t accepted_filesize;
@@ -623,15 +627,24 @@ int incoming_group_file()
 
 int outgoing_file()
 {
+    //Do not continue if there is no target, the target doesn't start with '@', or is a group target (starts with '@@')
+    if(!msg_target || msg_target[0] != '@' || msg_target[1] == '@')
+    {
+        printf("Invalid user target.\n");
+        return 0;
+    }
+    ++msg_target;
+
+    
     if(file_transfers)
     {
         printf("A pending file transfer already exist. Cannot continue...\n");
         return 0;
     }
-
     file_transfers = calloc(1, sizeof(FileXferArgs));
 
-    parse_send_cmd_sender(buffer, file_transfers, 0);
+
+    parse_send_cmd_sender(msg_body, file_transfers, 0);
     if(!new_send_cmd(file_transfers))
         return 0;
 
@@ -640,15 +653,24 @@ int outgoing_file()
 
 int outgoing_file_group()
 {
+    //Do not continue if there is no target, or target is not a group
+    if(!msg_target || strncmp(msg_target, "@@", 2) != 0)
+    {
+        printf("Invalid group target.\n");
+        return 0;
+    }
+    msg_target += 2;
+    
+
     if(file_transfers)
     {
         printf("A pending file transfer already exist. Cannot continue...\n");
         return 0;
     }
-
     file_transfers = calloc(1, sizeof(FileXferArgs));
 
-    parse_send_cmd_sender(buffer, file_transfers, 1);
+
+    parse_send_cmd_sender(msg_body, file_transfers, 1);
     if(!put_file_to_group(file_transfers))
         return 0;
 
@@ -657,21 +679,28 @@ int outgoing_file_group()
 
 int accept_incoming_file()
 {
-    char target_name[USERNAME_LENG+1];
     FileInfo *pending_xfer;
 
-    sscanf(buffer, "!acceptfile=%s",target_name);
+    if(!msg_target)
+        return 0;
+
+    if(msg_target[0] == '@')
+    {
+        ++msg_target;
+        if(msg_target[0] == '@')
+            ++msg_target;
+    }
 
     //Find the file associated with the sender
-    pending_xfer = find_pending_xfer(target_name);
+    pending_xfer = find_pending_xfer(msg_target);
     if(!pending_xfer)
     {
-        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        printf("Target \"%s\" hasn't offered any files.\n", msg_target);
         return 0;
     }
 
     file_transfers = calloc(1, sizeof(FileXferArgs));
-    strcpy(file_transfers->target_name, target_name);
+    strcpy(file_transfers->target_name, msg_target);
     strcpy(file_transfers->filename, pending_xfer->filename);
     strcpy(file_transfers->token, pending_xfer->token);
     file_transfers->filesize = pending_xfer->filesize;
@@ -686,22 +715,31 @@ int accept_incoming_file()
     send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
 
     //Dial a new connection for the file transfer
-    return new_recv_connection(file_transfers);
+    new_recv_connection(file_transfers);
+
+    return 0;
 }
 
 
 int reject_incoming_file()
 {
-    char target_name[USERNAME_LENG+1];
+    if(!msg_target)
+        return 0;
 
-    sscanf(buffer, "!rejectfile=%s", target_name);
-    if(delete_pending_xfer(target_name) == 0)
+    if(msg_target[0] == '@')
     {
-        printf("User \"%s\" hasn't offered any files.\n", target_name);
+        ++msg_target;
+        if(msg_target[0] == '@')
+            ++msg_target;
+    }
+
+    if(delete_pending_xfer(msg_target) == 0)
+    {
+        printf("User \"%s\" hasn't offered any files.\n", msg_target);
         return 0;
     }
 
-    sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
+    sprintf(buffer, "!rejectfile=%s,reason=%s", msg_target, "RecverDeclined");
     send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
 
     return 0;

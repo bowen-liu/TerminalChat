@@ -68,7 +68,7 @@ extern Group *lobby;
 
 
 
-int init_group_module();
+void create_lobby_group();
 
 unsigned int send_lobby(Client *c, char* buffer, size_t size);
 unsigned int send_group(Group* group, char* buffer, size_t size);

@@ -9,7 +9,8 @@ int epoll_fd;
 
 //Receive buffers
 char *buffer;
-static size_t buffer_size = BUFSIZE;
+char *msg_target;
+char *msg_body;
 static size_t last_received;
 
 
@@ -191,33 +192,13 @@ static int register_with_server()
         goto register_with_server_failed;
 
 
-    /************************************/
-    /* Get the current active user list */
-    /************************************/
-
-    //Request a list of active users from the server
-    strcpy(buffer, "!userlist");
-    if(!send_msg(buffer, strlen(buffer)+1))
-        return 0;
-    
-    //Wait for server to reply
-    if(!recv_msg(buffer, BUFSIZE))
-        return 0;
-    
-    //Parse the returned userlist
-    if(strncmp(buffer, "!userlist=", 10) == 0)
-        parse_userlist();
-    else
-        goto register_with_server_failed;
-
-    
 
     /************************************/
     /*     Join the main chat lobby     */
     /************************************/
 
     //Request a list of active users from the server
-    sprintf(buffer, "!joingroup=%s", LOBBY_GROUP_NAME);
+    sprintf(buffer, "@@%s !joingroup", LOBBY_GROUP_NAME);
     if(!send_msg(buffer, strlen(buffer)+1))
         return 0;
     
@@ -227,10 +208,22 @@ static int register_with_server()
     
     //Parse the returned userlist
     if(strncmp(buffer, "!groupjoined=", 10) == 0)
-    {
         group_joined();
-        return 1;
-    }   
+    else
+        goto register_with_server_failed;
+
+    
+    /************************************/
+    /* Get the current active user list */
+    /************************************/
+
+    //Request a list of active users from the server
+    strcpy(buffer, "!userlist");
+    if(!send_msg(buffer, strlen(buffer)+1))
+        return 0;
+
+    //The returned userlist will be interpreted later in the client main loop  
+    return 1;
 
 
 register_with_server_failed:
@@ -246,7 +239,7 @@ static int handle_user_command()
 {
     //Return 0 if you don't want the command to be forwarded
 
-    if(strcmp(buffer, "!close") == 0)
+    if(strcmp(msg_body, "!close") == 0)
     {
         printf("Closing connection!\n");
         exit(0);
@@ -254,24 +247,24 @@ static int handle_user_command()
 
     /*Group operations. Implemented in group.c*/
 
-    else if(strncmp(buffer, "!leavegroup=", 12) == 0)
+    else if(strncmp(msg_body, "!leavegroup", 11) == 0)
         return leaving_group();
 
     /*File Transfer operations. Implemented in file_transfer_client.c*/
 
-    else if(strncmp("!sendfile=", buffer, 10) == 0)
+    else if(strncmp("!sendfile=", msg_body, 10) == 0)
         return outgoing_file();
     
-    else if(strncmp("!acceptfile=", buffer, 12) == 0)
+    else if(strcmp("!acceptfile", msg_body) == 0)
         return accept_incoming_file();
 
-    else if(strncmp("!rejectfile=", buffer, 12) == 0)
+    else if(strcmp("!rejectfile", msg_body) == 0)
         return reject_incoming_file();
 
-    else if(strncmp("!cancelfile", buffer, 11) == 0)
+    else if(strcmp("!cancelfile", msg_body) == 0)
         return cancel_ongoing_file_transfer();
 
-    else if(strncmp("!putfile=", buffer, 9) == 0)   
+    else if(strncmp("!putfile=", msg_body, 9) == 0)   
         return outgoing_file_group();
 
     return 1;
@@ -283,7 +276,7 @@ static int handle_user_command()
 /*  Server Control Messages   */
 /******************************/
 
-static void user_offline()
+/*static void user_offline()
 {
     char target_username[USERNAME_LENG+1];
     Member *member;
@@ -310,7 +303,7 @@ static void user_online()
     printf("User \"%s\" has connected.\n", member->username);
     HASH_ADD_STR(online_members, username, member);
     ++users_online;
-}
+}*/
 
 static void parse_userlist()
 {
@@ -406,7 +399,7 @@ static void parse_control_message(char* cmd_buffer)
         incoming_file();
 
     else if(strncmp("!acceptfile=", buffer, 12) == 0)
-        begin_file_sending();
+        recver_accepted_file();
 
     else if(strncmp("!rejectfile=", buffer, 12) == 0)
         rejected_file_sending();
@@ -435,6 +428,7 @@ static void parse_control_message(char* cmd_buffer)
 
 static inline void client_main_loop()
 {
+     static size_t buffer_size = BUFSIZE;
      struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
      int bytes;
@@ -464,12 +458,18 @@ static inline void client_main_loop()
                 if(strlen(buffer) < 1 || buffer[0] == '\n')
                     continue;
 
+                seperate_target_command(buffer, &msg_target, &msg_body);
+
                 //If the client has specified a command, check if anything needs to be done on the client side immediately
-                if(buffer[0] == '!')
+                if(msg_body && msg_body[0] == '!')
                 {
                     if(!handle_user_command())
                         continue;
                 }
+
+                //Restore the space between the target and message body, if it was removed by seperate_target_command()
+                if(msg_target && msg_body)
+                    *(msg_body-1) = ' ';
 
                 //Transmit the line read from stdin to the server
                 if(!send_msg(buffer, strlen(buffer)+1))

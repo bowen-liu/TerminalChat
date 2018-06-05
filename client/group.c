@@ -18,7 +18,7 @@ void group_invited()
     printf("You are being invited to the group \"%s\" by user \"%s\".\n", group_name, invite_sender);
 
     //Automatically accept it for now
-    sprintf(buffer, "!joingroup=%s", group_name);
+    sprintf(buffer, "@@%s !joingroup", group_name);
     send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
 }
 
@@ -127,15 +127,16 @@ int parse_filelist()
 
 int leaving_group()
 {
-    char groupname[USERNAME_LENG+1];
     Namelist *current_group_name, *tmp_name;
 
-    sscanf(buffer, "!leavegroup=%s", groupname);
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
 
     //Find the entry in the client's group_joined list and remove the entry
     LL_FOREACH_SAFE(groups_joined, current_group_name, tmp_name)
     {
-        if(strcmp(groupname, current_group_name->name) == 0)
+        if(strcmp(msg_target, current_group_name->name) == 0)
             break;
         else 
             current_group_name = NULL;
@@ -143,11 +144,11 @@ int leaving_group()
 
     if(!current_group_name)
     {
-        printf("You do not appear to be a member of the group \"%s\".\n", groupname);
+        printf("You do not appear to be a member of the group \"%s\".\n", msg_target);
         return 1;       //Send the leave command to server anyways, just in case if we didn't record the join
     }
 
-    printf("You have left the group \"%s\".\n", groupname);
+    printf("You have left the group \"%s\".\n", msg_target);
     LL_DELETE(groups_joined, current_group_name);
     free(current_group_name);
     return 1;

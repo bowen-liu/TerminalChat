@@ -209,13 +209,11 @@ void disconnect_client_group_cleanup(Client *c)
     
     //Leave all participating chat groups.
     LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
-    {
-        printf("Disconnect: Leaving group \"%s\"\n", current_group_name->name);
-        
+    {   
         HASH_FIND_STR(groups, current_group_name->name, group);
         if(group)
         {
-            leave_group_direct(group, current_client);
+            leave_group_direct(group, current_client, "Disconnect");
             LL_DELETE(current_client->groups_joined, current_group_name);
             free(current_group_name);
         }
@@ -363,7 +361,7 @@ int create_new_group()
 }
 
 
-int leave_group_direct(Group *group, Client *c)
+int leave_group_direct(Group *group, Client *c, char *reason)
 {
     char leavemsg[BUFSIZE];
     Group_Member* target_member;
@@ -383,8 +381,8 @@ int leave_group_direct(Group *group, Client *c)
     //No need to announce member leaving if the member never joined the group (unresponded invite)
     if(has_joined)
     {
-        sprintf(leavemsg, "!leftgroup=%s,user=%s", group->groupname, c->username);
-        printf("User \"%s\" has left the group \"%s\".\n", c->username, group->groupname);
+        sprintf(leavemsg, "!leftgroup=%s,user=%s,reason=%s", group->groupname, c->username, (reason)? reason:"none" );
+        printf("User \"%s\" has left the group \"%s\". Reason: %s\n", c->username, group->groupname, reason);
         send_group(group, leavemsg, strlen(leavemsg)+1);
     }
     else
@@ -430,7 +428,7 @@ int leave_group()
     free(groupname_entry);
 
     //Leave the group officially
-    return leave_group_direct(group, current_client);
+    return leave_group_direct(group, current_client, NULL);
 }
 
 

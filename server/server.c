@@ -84,8 +84,8 @@ static inline void cleanup_user_connection(Client *c)
     disconnect_client_group_cleanup(c);
         
     //Free up resources used by the user
-    sprintf(disconnect_msg, "!useroffline=%s", c->username);
-    send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);
+    /*sprintf(disconnect_msg, "!useroffline=%s", c->username);
+    send_bcast(disconnect_msg, strlen(disconnect_msg)+1, 1, 0);*/
 
     HASH_FIND_STR(active_users, c->username, user);
     HASH_DEL(active_users, user);
@@ -366,8 +366,8 @@ static inline int register_client_connection()
     send_msg(current_client, buffer, strlen(buffer)+1);
 
     //Announce to all online users that a new user has joined
-    sprintf(buffer, "!useronline=%s", current_client->username);
-    send_bcast(buffer, strlen(buffer)+1, 1, 0);
+    /*sprintf(buffer, "!useronline=%s", current_client->username);
+    send_bcast(buffer, strlen(buffer)+1, 1, 0);*/
     ++total_users;
 
     printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 

@@ -79,7 +79,7 @@ Group_Member* allocate_group_member(Group *group, Client *target_user, int permi
 
 int userlist_group(char *group_name);
 int create_new_group();
-int leave_group_direct(Group *group, Client *c);
+int leave_group_direct(Group *group, Client *c, char *reason);
 int leave_group();
 int join_group();
 int invite_to_group();

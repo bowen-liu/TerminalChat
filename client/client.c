@@ -371,17 +371,17 @@ static void parse_control_message(char* cmd_buffer)
     char *old_buffer = buffer;
     buffer = cmd_buffer;
     
-    if(strncmp("!useroffline=", buffer, 13) == 0)
-        user_offline();
-
-    else if(strncmp("!useronline=", buffer, 12) == 0)
-        user_online();
-
-    else if(strncmp("!longmsg=", buffer, 9) == 0)
+    if(strncmp("!longmsg=", buffer, 9) == 0)
         recv_long_msg();
 
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
+
+    /*else if(strncmp("!useroffline=", buffer, 13) == 0)
+        user_offline();
+
+    else if(strncmp("!useronline=", buffer, 12) == 0)
+        user_online();*/
 
     /*Group operations. Implemented in group.c*/
 

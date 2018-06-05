@@ -62,10 +62,15 @@ void group_kicked()
 
 void user_left_group()
 {
-    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1];
+    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1], reason[BUFSIZE];
 
-    sscanf(buffer, "!leftgroup=%[^,],user=%s", groupname, username);
-    printf("User \"%s\" has left the group \"%s\".\n", username, groupname);
+    sscanf(buffer, "!leftgroup=%[^,],user=%[^,],reason=%s", groupname, username, reason);
+    printf("User \"%s\" has left the group \"%s\". ", username, groupname);
+
+    if(strcmp(reason, "none") == 0)
+        printf("\n");
+    else
+        printf("Reason: %s\n", reason);
 }
 
 

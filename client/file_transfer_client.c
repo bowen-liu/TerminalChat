@@ -168,9 +168,9 @@ static void parse_send_cmd_sender(char *buffer, FileXferArgs *args, int target_i
     memset(args, 0 ,sizeof(FileXferArgs));
 
     if(target_is_group)
-        sscanf(buffer, "!putfile=%[^,]", args->target_file);
+        sscanf(buffer, "!putfile %[^$]", args->target_file);
     else
-        sscanf(buffer, "!sendfile=%[^,]", args->target_file);
+        sscanf(buffer, "!sendfile %[^$]", args->target_file);
     
     strcpy(args->target_name, msg_target);
 
@@ -238,8 +238,8 @@ static int new_send_cmd(FileXferArgs *args)
     args->operation = SENDING_OP;
 
     //Rewrite the existing message in buffer with the de-localized filename
-    sprintf(buffer, "!sendfile=%s,size=%zu,crc=%x,target=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name);
+    sprintf(buffer, "@%s !sendfile=%s,size=%zu,crc=%x", 
+            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
     printf("Initiating file transfer with user \"%s\" for file \"%s\" (%zu bytes, checksum: %x)\n", 
             file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
 
@@ -504,8 +504,8 @@ static int put_file_to_group(FileXferArgs *args)
     args->operation = SENDING_OP;
 
     //Rewrite the existing message in buffer with the de-localized filename
-    sprintf(buffer, "!putfile=%s,size=%zu,crc=%x,target=%s", 
-            file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name);
+    sprintf(buffer, "@@%s !putfile=%s,size=%zu,crc=%x", 
+            file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
     printf("Initiating file put with group \"%s\" for file \"%s\" (%zu bytes, checksum: %x)\n", 
             file_transfers->target_name, file_transfers->filename, file_transfers->filesize, file_transfers->checksum);
     
@@ -723,6 +723,8 @@ int accept_incoming_file()
 
 int reject_incoming_file()
 {
+    char target_name[USERNAME_LENG+1];
+
     if(!msg_target)
         return 0;
 
@@ -733,13 +735,14 @@ int reject_incoming_file()
             ++msg_target;
     }
 
-    if(delete_pending_xfer(msg_target) == 0)
+    strcpy(target_name, msg_target);
+    if(delete_pending_xfer(target_name) == 0)
     {
-        printf("User \"%s\" hasn't offered any files.\n", msg_target);
+        printf("User \"%s\" hasn't offered any files.\n", target_name);
         return 0;
     }
 
-    sprintf(buffer, "!rejectfile=%s,reason=%s", msg_target, "RecverDeclined");
+    sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
     send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
 
     return 0;

@@ -198,7 +198,7 @@ static int register_with_server()
     /************************************/
 
     //Request a list of active users from the server
-    sprintf(buffer, "@@%s !joingroup", LOBBY_GROUP_NAME);
+    sprintf(buffer, "!joingroup @@%s", LOBBY_GROUP_NAME);
     if(!send_msg(buffer, strlen(buffer)+1))
         return 0;
     
@@ -247,12 +247,12 @@ static int handle_user_command()
 
     /*Group operations. Implemented in group.c*/
 
-    else if(strncmp(msg_body, "!leavegroup", 11) == 0)
+    else if(strncmp(msg_body, "!leavegroup ", 12) == 0)
         return leaving_group();
 
     /*File Transfer operations. Implemented in file_transfer_client.c*/
 
-    else if(strncmp("!sendfile=", msg_body, 10) == 0)
+    else if(strncmp("!sendfile ", msg_body, 10) == 0)
         return outgoing_file();
     
     else if(strcmp("!acceptfile", msg_body) == 0)
@@ -264,7 +264,7 @@ static int handle_user_command()
     else if(strcmp("!cancelfile", msg_body) == 0)
         return cancel_ongoing_file_transfer();
 
-    else if(strncmp("!putfile=", msg_body, 9) == 0)   
+    else if(strncmp("!putfile ", msg_body, 9) == 0)   
         return outgoing_file_group();
 
     return 1;
@@ -467,8 +467,8 @@ static inline void client_main_loop()
                         continue;
                 }
 
-                //Restore the space between the target and message body, if it was removed by seperate_target_command()
-                if(msg_target && msg_body)
+                //Restore the space between the target and message body, if it was removed by seperate_target_command() and hasn't been altered
+                if(msg_target && msg_body && *(msg_body-1) == '\0' )
                     *(msg_body-1) = ' ';
 
                 //Transmit the line read from stdin to the server

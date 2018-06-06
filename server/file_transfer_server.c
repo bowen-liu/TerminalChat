@@ -432,18 +432,19 @@ int new_client_transfer()
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
     char target_name[USERNAME_LENG+1];
 
-    /*if(!msg_target)
+    if(!msg_target)
         return 0;
-    ++msg_target;*/
+    ++msg_target;
 
-    sscanf(buffer, "!sendfile=%[^,],size=%zu,crc=%x,target=%s", 
-            xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_name);
+    sscanf(msg_body, "!sendfile=%[^,],size=%zu,crc=%x", 
+            xferargs->filename, &xferargs->filesize, &xferargs->checksum);
+    strcpy(target_name, msg_target);
 
     //Find the target user specified
-    HASH_FIND_STR(active_users, target_name, xferargs->target_user);
+    HASH_FIND_STR(active_users, msg_target, xferargs->target_user);
     if(!xferargs->target_user)
     {
-        printf("User \"%s\" not found\n", target_name);
+        printf("User \"%s\" not found\n", msg_target);
         free(xferargs);
         send_msg(current_client, "UserNotFound", 13);
         return 0;
@@ -539,7 +540,7 @@ int rejected_file_transfer()
     sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
 
     HASH_FIND_STR(active_users, target_name, target);
-    if(!target->c->file_transfers || strcmp(target->c->file_transfers->target_user->username, current_client->username) != 0)
+    if(!target || !target->c->file_transfers || strcmp(target->c->file_transfers->target_user->username, current_client->username) != 0)
     {
         printf("User has no pending file transfer.\n");
         send_msg(current_client, "NoFileFound", 12); 
@@ -705,7 +706,7 @@ int put_new_file_to_group()
         return 0;
     msg_target += 2;
     
-    sscanf(buffer, "!putfile=%[^,],size=%zu,crc=%x", 
+    sscanf(msg_body, "!putfile=%[^,],size=%zu,crc=%x", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum);
 
     //Check if group exists and user is a member
@@ -761,7 +762,7 @@ int get_new_file_from_group()
         return 0;
     msg_target += 2;
     
-    sscanf(buffer, "!getfile=%u", &requested_fileid);
+    sscanf(msg_body, "!getfile %u", &requested_fileid);
 
     //Check if group exists and user is a member
     if(!basic_group_permission_check(msg_target, &xferargs->target_group, &target_member))

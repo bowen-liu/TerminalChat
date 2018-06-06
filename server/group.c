@@ -291,10 +291,14 @@ int create_new_group()
     User *target_user = NULL;
     int invites_sent = 0;
 
-    //Ensure the groupname is valid and does not already exist
     token = strtok(buffer, " ");                                //Skip the header token "!newgroup"
     token = strtok(NULL, " ");                                  //Name of the group to be created
 
+    //Strip any leading '@' from the proposed name, if any
+    while(token[0] == '@')
+        ++token;
+
+    //Ensure the groupname is valid and does not already exist
     if(!token || !name_is_valid(token))
     {
         send_msg(current_client, "InvalidGroupName", 17);
@@ -362,7 +366,6 @@ int leave_group_direct(Group *group, Client *c, char *reason)
     HASH_DEL(group->members, target_member);
     free(target_member);
 
-    //No need to announce member leaving if the member never joined the group (unresponded invite)
     if(has_joined)
     {
         if(!reason)
@@ -371,7 +374,9 @@ int leave_group_direct(Group *group, Client *c, char *reason)
         sprintf(leavemsg, "!leftgroup=%s,user=%s,reason=%s", group->groupname, c->username, reason);
         printf("User \"%s\" has left the group \"%s\". Reason: %s\n", c->username, group->groupname, reason);
 
-        send_msg(c, leavemsg, strlen(leavemsg)+1);
+        //Inform the client and the rest of the group about the leave
+        if(c->socketfd)
+            send_msg(c, leavemsg, strlen(leavemsg)+1);
         send_group(group, leavemsg, strlen(leavemsg)+1);
     }
     else
@@ -389,28 +394,29 @@ int leave_group_direct(Group *group, Client *c, char *reason)
 
 int leave_group()
 {
+    char groupname[USERNAME_LENG+3];
+    char *groupname_plain;
+    
     Namelist *groupname_entry;
     Group *group;
 
-    if(!msg_target)
-        return 0;
-        
-    msg_target += 2;
+    sscanf(buffer, "!leavegroup %s", groupname);
+    groupname_plain = plain_name(groupname);
 
     //Locate this group in the hash table
-    HASH_FIND_STR(groups, msg_target, group);
+    HASH_FIND_STR(groups, groupname_plain, group);
     if(!group)
     {
-        printf("Group \"%s\" was not found.\n", msg_target);
+        printf("Group \"%s\" was not found.\n", groupname_plain);
         send_msg(current_client, "InvalidGroup", 13);
         return 0;
     }
     
     //Find the entry in the client's group_joined list and remove the entry
-    groupname_entry = find_from_namelist(current_client->groups_joined, msg_target);
+    groupname_entry = find_from_namelist(current_client->groups_joined, groupname_plain);
     if(!groupname_entry)
     {
-        printf("Leave: User \"%s\" not found in group \"%s\".\n", current_client->username, msg_target);
+        printf("Leave: User \"%s\" not found in group \"%s\".\n", current_client->username, groupname_plain);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
@@ -425,19 +431,20 @@ int leave_group()
 
 int join_group()
 {
+    char groupname[USERNAME_LENG+3];
+    char *groupname_plain;
+
     Group *group;
     Group_Member *newmember = NULL;
 
-    if(!msg_target)
-        return 0;
-
-    msg_target += 2;
+    sscanf(buffer, "!joingroup %s", groupname);
+    groupname_plain = plain_name(groupname);
 
     //Locate this group in the hash table
-    HASH_FIND_STR(groups, msg_target, group);
+    HASH_FIND_STR(groups, groupname_plain, group);
     if(!group)
     {
-        printf("Group \"%s\" was not found.\n", msg_target);
+        printf("Group \"%s\" was not found.\n", groupname_plain);
         send_msg(current_client, "InvalidGroup", 13);
         return 0;
     }

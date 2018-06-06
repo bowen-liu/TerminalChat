@@ -328,3 +328,14 @@ void seperate_target_command(char* buffer, char** msg_target_ret, char** msg_bod
         *msg_body_ret = space + 1;
     }
 }
+
+//Strip leading '@'s from the proposed name, if any
+char* plain_name(char *name)
+{
+    char *plain_name = name;
+
+    while(plain_name[0] == '@')
+        ++plain_name;
+    
+    return plain_name;
+}

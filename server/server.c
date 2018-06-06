@@ -81,6 +81,7 @@ static inline void cleanup_user_connection(Client *c)
     //Close the main user's connection
     kill_connection(c->socketfd);
     printf("Closed user connection for \"%s\"\n", c->username);
+    c->socketfd = 0;
         
     //Leave participating chat groups
     disconnect_client_group_cleanup(c);
@@ -159,7 +160,7 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
     bytes = send_msg_direct(c->socketfd, buffer, size);
     if(bytes <= 0)
     {
-        perror("Failed to send greeting message to client");
+        perror("Failed to send message to client");
         disconnect_client(c);
         return 0;
     }
@@ -463,10 +464,10 @@ static inline int parse_client_command()
     else if(strncmp(msg_body, "!newgroup", 9) == 0)
         return create_new_group();
 
-    else if(strcmp(msg_body, "!joingroup") == 0)
+    else if(strncmp(msg_body, "!joingroup ", 11) == 0)
         return join_group();
 
-    else if(strcmp(msg_body, "!leavegroup") == 0)
+    else if(strncmp(msg_body, "!leavegroup ", 12) == 0)
         return leave_group();
 
     else if(strncmp(msg_body, "!invitegroup,", 13) == 0)
@@ -496,7 +497,7 @@ static inline int parse_client_command()
     else if(strncmp(msg_body, "!putfile=", 9) == 0)
         return put_new_file_to_group();
 
-    else if(strncmp(msg_body, "!getfile=", 9) == 0)
+    else if(strncmp(msg_body, "!getfile ", 9) == 0)
         return get_new_file_from_group();
     
     

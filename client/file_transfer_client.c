@@ -107,7 +107,7 @@ static int new_transfer_connection(FileXferArgs *args)
     }
 
     //Wait for server greeting
-    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    if(recv_msg_client(args->socketfd, buffer, BUFSIZE) <= 0)
     {
         cancel_transfer(args);
         return 0;
@@ -303,7 +303,7 @@ int recver_accepted_file()
     sprintf(buffer, "!xfersend=%s,size=%zu,crc=%x,sender=%s,recver=%s,token=%s", 
             file_transfers->filename, file_transfers->filesize, file_transfers->checksum, my_username, file_transfers->target_name, file_transfers->token);
     
-    if(!send_msg_client(file_transfers->socketfd, buffer, strlen(buffer)+1))
+    if(send_msg_client(file_transfers->socketfd, buffer, strlen(buffer)+1) <= 0)
     {
         perror("Failed to send transfer registration.");
         cancel_transfer(file_transfers);
@@ -311,7 +311,7 @@ int recver_accepted_file()
     }
 
     //Obtain a response from the server
-    if(!recv_msg_client(file_transfers->socketfd, buffer, BUFSIZE))
+    if(recv_msg_client(file_transfers->socketfd, buffer, BUFSIZE) <= 0)
     {
         cancel_transfer(file_transfers);
         return 0;
@@ -416,7 +416,7 @@ static int new_recv_connection(FileXferArgs *args)
     //Tell server I'm using this connection to download a file
     sprintf(buffer, "!xferrecv=%s,size=%zu,crc=%x,sender=%s,recver=%s,token=%s", 
             file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, my_username, file_transfers->token);
-    if(!send_msg_client(args->socketfd, buffer, strlen(buffer)+1))
+    if(send_msg_client(args->socketfd, buffer, strlen(buffer)+1) <= 0)
     {
         perror("Failed to send transfer registration.");
         cancel_transfer(args);
@@ -424,7 +424,7 @@ static int new_recv_connection(FileXferArgs *args)
     }
 
     //Obtain a response from the server
-    if(!recv_msg_client(args->socketfd, buffer, BUFSIZE))
+    if(recv_msg_client(args->socketfd, buffer, BUFSIZE) <= 0)
     {
         cancel_transfer(args);
         return 0;

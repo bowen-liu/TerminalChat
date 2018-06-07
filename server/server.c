@@ -134,7 +134,19 @@ static void exit_cleanup()
 /*     Basic Send/Receive     */
 /******************************/
 
-//TODO: Handle partial sends for regular messages?
+static unsigned int transfer_next_pending(Client *c)
+{
+    int retval;
+
+    retval = transfer_next_common(c->socketfd, &c->pending_msg);
+    if(retval <= 0)
+        disconnect_client(c);
+    
+    //Remove the EPOLLOUT notification once long send has completed
+    if(c->pending_msg.pending_op == NO_XFER_OP)
+        update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
+
+}
 
 unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
 {
@@ -143,29 +155,20 @@ unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
 
 unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
-    int bytes;
-
-    if(size == 0)
-    {
-        printf("Cannot send this message. size=0 \n");
-        return 0;
-    }
-    else if(size > MAX_MSG_LENG)
-    {
-        printf("Cannot send this message. Size too big\n");
-        return 0;
-    }
-
+    int retval;
     
-    bytes = send_msg_direct(c->socketfd, buffer, size);
-    if(bytes <= 0)
-    {
-        perror("Failed to send message to client");
+    retval = send_msg_common(c->socketfd, buffer, size, &c->pending_msg);
+    
+    if(retval < 0)
         disconnect_client(c);
+    else if(retval == 0)
         return 0;
-    }
-    
-    return bytes;
+
+    //Start of a new long send. Register the client's FD to signal on EPOLLOUT
+    if(c->pending_msg.pending_op == SENDING_OP)
+        update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
+
+    return retval;
 }
 
 unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
@@ -193,89 +196,18 @@ unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int inclu
 }
 
 
-static void send_long_msg()
-{
-    int remaining_size = current_client->pending_size - current_client->pending_processed;
-    int bytes;
-
-    //Start of a new long send. Register the client's FD to signal on EPOLLOUT
-    if(current_client->pending_processed == 0)
-        update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
-     
-    //Send the next chunk to the client
-    bytes = send_msg_direct(current_client->socketfd, &current_client->pending_buffer[current_client->pending_processed], (remaining_size >= LONG_RECV_PAGE_SIZE)? LONG_RECV_PAGE_SIZE:remaining_size);
-
-    //Check exit conditions
-    if(bytes <= 0)
-    {
-        perror("Failed to send long message");
-        printf("Sent %zu\\%zu bytes to client \"%s\" before failure.\n", current_client->pending_processed, current_client->pending_size, current_client->username);
-    }
-    else
-    {
-        current_client->pending_processed += bytes;
-        if(current_client->pending_processed < current_client->pending_size)
-            return;
-    }
-
-    //Cleanup resources once long sent has completed/failed
-    free(current_client->pending_buffer);
-    current_client->pending_buffer = NULL;
-    current_client->pending_size = 0;
-    current_client->pending_processed = 0;
-
-    //Remove the EPOLLOUT notification once long send has completed
-    update_epoll_events(connections_epollfd, current_client->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
-}
-
-
-void send_new_long_msg(char* buffer, size_t size)
-{
-    char* newbuffer;
-    size_t header_size;
-
-    //if(size < BUFSIZE)
-    if(size < LONG_RECV_PAGE_SIZE)
-    {
-        send_msg(current_client, buffer, size);
-        return;
-    }
-
-    newbuffer = malloc(size + 48);
-
-    //Add the longmsg header and total message size before the message
-    sprintf(newbuffer, "!longmsg=%zu ", size);
-    header_size = strlen(newbuffer);
-    strcat(newbuffer, buffer);
-
-    //Start the operation
-    current_client->pending_buffer = newbuffer;
-    current_client->pending_size = size + header_size;
-    current_client->pending_processed = 0;
-    send_long_msg();
-}
-
-
 unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
-    int bytes = recv(c->socketfd, buffer, BUFSIZE, 0);
-    if(bytes < 0)
-    {
-        perror("Failed to receive from client. Disconnecting...");
-        printf("Client: %s\n", c->username);
-        disconnect_client(c);
-        return 0;
-    }
+    int retval; 
 
-    //Client has disconnected unexpectedly
-    else if(bytes == 0)
-    {
-        printf("Unexpected disconnect from client %s:%d : \n", inet_ntoa(c->sockaddr.sin_addr), ntohs(c->sockaddr.sin_port));
+    retval = recv_msg_common(c->socketfd, buffer, size, &c->pending_msg);
+    
+    if(retval < 0)
         disconnect_client(c);
+    else if(retval == 0)
         return 0;
-    }
 
-    return bytes;
+    return retval;
 }
 
 
@@ -400,13 +332,12 @@ static inline int client_pm()
 
     //Forward message to the target
     sprintf(pmsg, "%s (PM): %s", current_client->username, msg_body);
-    if(!send_msg(target->c, pmsg, strlen(pmsg)+1))
+    if(send_msg(target->c, pmsg, strlen(pmsg)+1) <= 0)
         return 0;
 
     //Echo back to the sender
     sprintf(pmsg, "%s (PM to %s): %s", current_client->username, msg_target, msg_body);
-    if(!send_msg(current_client, pmsg, strlen(pmsg)+1))
-        return 0;
+    send_msg(current_client, pmsg, strlen(pmsg)+1);
     
     return 1;
 }
@@ -438,7 +369,7 @@ static inline int userlist()
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
-    send_new_long_msg(userlist_msg, userlist_size);
+    send_msg(current_client, userlist_msg, userlist_size);
     free(userlist_msg);
 
     return total_users;
@@ -753,13 +684,25 @@ static inline void server_main_loop()
                 
                 //Handles EPOLLIN (ready for reading)
                 else if(events[i].events & EPOLLIN)
+                {
+                    if(current_client->pending_msg.pending_op == RECVING_OP)
+                    {
+                        transfer_next_common(current_client->socketfd, &current_client->pending_msg);
+                        
+                        //Check if the entire message has been received
+                        if(current_client->pending_msg.pending_op != NO_XFER_OP)
+                            continue;
+                    }
+                        
                     handle_client_msg();
+                }
+                    
 
                 //Handle EPOLLOUT (ready for writing) if the client has pending long messages
                 else if(events[i].events & EPOLLOUT)
                 {
-                    if(current_client->pending_size > 0)
-                        send_long_msg();
+                    if(current_client->pending_msg.pending_op == SENDING_OP)
+                        transfer_next_common(current_client->socketfd, &current_client->pending_msg);
 
                     else if(current_client->connection_type == TRANSFER_CONNECTION)
                         client_data_forward_recver_ready();

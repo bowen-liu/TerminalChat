@@ -22,16 +22,18 @@
 #include "../library/uthash/uthash.h"                //http://troydhanson.github.io/uthash/  
 #include "../library/uthash/utlist.h"                //http://troydhanson.github.io/uthash/utlist.html
 
+#include "sendrecv.h"
+
 
 #define DEFAULT_SERVER_PORT     6996
 #define LOBBY_GROUP_NAME        ((const char*) "all")
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
-#define BUFSIZE                 4096                                //Buffer size used to hold a single received message
+#define BUFSIZE                 2048                                //Buffer size used to hold a single received message
 #define XFER_BUFSIZE            1048576                             //Buffer size used to hold a piece of data during file transfer
 #define MAX_MSG_LENG            512                                 //Maximum size of messages can be entered by the user
 
-#define LONG_RECV_PAGE_SIZE     32                                  //For testing long send/recv
+#define LONG_RECV_PAGE_SIZE     64                                  //For testing long send/recv
 
 
 /*File Transfer*/
@@ -44,7 +46,6 @@
 #define LOCAL_FOLDER_PERMISSION 600
 
 
-enum sendrecv_op {NO_XFER_OP = 0, SENDING_OP, RECVING_OP};
 enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
 
 

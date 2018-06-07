@@ -13,12 +13,8 @@ char *msg_target;
 char *msg_body;
 static size_t last_received;
 
-
-//Buffers for long messages from server
-static int pending_long_msg = 0;
-static char *long_buffer;
-static size_t expected_long_size;
-static size_t received_long;
+//Used if the current message is still being sent or received
+Pending_Msg pending_msg;
 
 //Other clients
 static Member *online_members = NULL;
@@ -28,6 +24,9 @@ static unsigned int users_online = 0;
 
 static void exit_cleanup()
 {
+    if(file_transfers)
+        cancel_transfer(file_transfers);
+    
     close(my_socketfd);
 }
 
@@ -35,126 +34,30 @@ static void exit_cleanup()
 /*     Basic Send/Receive     */
 /******************************/
 
-unsigned int send_direct_client(int socket, char* buffer, size_t size)
+inline int send_direct_client(int socket, char* buffer, size_t size)
 {
     return send(socket, buffer, size, 0);
 }
 
-unsigned int send_msg_client(int socket, char* buffer, size_t size)
+inline int send_msg_client(int socketfd, char* buffer, size_t size)
 {
-    int bytes;
+    int retval = send_msg_common(socketfd, buffer, size, &pending_msg);
 
-    if(size == 0)
-        return 0;
+    if(retval < 0)
+        exit(retval);
 
-    else if(size > MAX_MSG_LENG)
-    {
-        printf("Cannot send this message. Size too big\n");
-        return 0;
-    }
+    return retval;
+}
+
+inline int recv_msg_client(int socketfd, char* buffer, size_t size)
+{
+    int retval = recv_msg_common(my_socketfd, buffer, size, &pending_msg);
     
-    bytes = send_direct_client(socket, buffer, size);
-    if(bytes < 0)
-    {
-        perror("Failed to sent message to the server...");
-        return 0;
-    }
+    if(retval < 0)
+        exit(retval);
 
-    return bytes;
+    return retval;
 }
-
-unsigned int recv_msg_client(int socket, char* buffer, size_t size)
-{
-    int bytes = recv(socket, buffer, size, 0);
-    if(bytes < 0)
-    {
-        perror("Failed to receive message from server");
-        return 0;
-    }
-    else if(bytes == 0)
-    {
-        printf("Server has disconnected unexpectedly...\n");
-        return 0;
-    }
-
-    return bytes;
-}
-
-static inline unsigned int send_msg(char* buffer, size_t size)
-{
-    return send_msg_client(my_socketfd, buffer, size);
-}
-
-static inline unsigned int recv_msg(char* buffer, size_t size)
-{
-    return recv_msg_client(my_socketfd, buffer, size);
-}
-
-
-
-
-/******************************/
-/*     Long Send/Receive     */
-/******************************/
-
-static void parse_control_message(char* buffer);
-static void recv_long_msg()
-{
-    int bytes;
-    char header[48];
-    char *longcmd;
-
-    //Start of a new long recv operation
-    if(!pending_long_msg)
-    {
-        sscanf(buffer, "%s ", header);
-        sscanf(header, "!longmsg=%zu", &expected_long_size);
-        
-        pending_long_msg = 1;
-        expected_long_size += strlen(header) + 1;
-        received_long = last_received;
-
-        //Copy the last received chunk into the start of the long buffer
-        long_buffer = malloc(expected_long_size);
-        memcpy(long_buffer, buffer, last_received);
-        return;
-    }
-
-    bytes = recv(my_socketfd, &long_buffer[received_long], LONG_RECV_PAGE_SIZE, 0);
-
-    //Check exit conditions
-    if(bytes <= 0)
-    {
-        perror("Failed to receive long message from server.");
-        printf("%zu\\%zu bytes received before failure.\n", received_long, expected_long_size);
-    }
-    else
-    {
-        received_long += bytes;
-
-        //Has the entire message been received?
-        if(received_long < expected_long_size)
-            return;
-
-        //Extract the long command after the !longmsg header
-        longcmd = strchr(long_buffer, ' ');
-        if(longcmd)
-            parse_control_message(&longcmd[1]);
-        else
-        {
-            //printf("Long message is malformed or does not contain a further control message\n");
-            printf("%.*s", (int)expected_long_size, long_buffer );
-        }   
-    }
-
-    //Free resources used for the long recv
-    free(long_buffer);
-    pending_long_msg = 0;
-    expected_long_size = 0;
-    received_long = 0;
-    long_buffer = NULL;
-}
-
 
 
 /******************************/
@@ -168,18 +71,18 @@ static int register_with_server()
     Therefore, all send/recv here are still blocking, and thus all actions done here are synchronous. */
 
     //Receive a greeting message from the server upon connecting to the server
-    if(!recv_msg(buffer, BUFSIZE))
+    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
     printf("%s\n", buffer);
 
     //Register my desired username
     printf("Registering username \"%s\"...\n", my_username);
     sprintf(buffer, "!register:username=%s", my_username);
-    if(!send_msg(buffer, strlen(buffer)+1))
+    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) <= 0)
         return 0;
 
     //Parse registration reply from server
-    if(!recv_msg(buffer, BUFSIZE))
+    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
 
     //Did we receive an anticipated !regreply?
@@ -199,11 +102,11 @@ static int register_with_server()
 
     //Request a list of active users from the server
     sprintf(buffer, "!joingroup @@%s", LOBBY_GROUP_NAME);
-    if(!send_msg(buffer, strlen(buffer)+1))
+    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) <= 0)
         return 0;
     
     //Wait for server to reply
-    if(!recv_msg(buffer, BUFSIZE))
+    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
     
     //Parse the returned userlist
@@ -219,7 +122,7 @@ static int register_with_server()
 
     //Request a list of active users from the server
     strcpy(buffer, "!userlist");
-    if(!send_msg(buffer, strlen(buffer)+1))
+    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) < 0)
         return 0;
 
     //The returned userlist will be interpreted later in the client main loop  
@@ -364,10 +267,7 @@ static void parse_control_message(char* cmd_buffer)
     char *old_buffer = buffer;
     buffer = cmd_buffer;
     
-    if(strncmp("!longmsg=", buffer, 9) == 0)
-        recv_long_msg();
-
-    else if(strncmp("!userlist=", buffer, 10) == 0)
+    if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
 
     /*else if(strncmp("!useroffline=", buffer, 13) == 0)
@@ -472,35 +372,66 @@ static inline void client_main_loop()
                     *(msg_body-1) = ' ';
 
                 //Transmit the line read from stdin to the server
-                if(!send_msg(buffer, strlen(buffer)+1))
-                {
-                    perror("Failed to transmit message to server.");
-                    return;
-                }
+                send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
             }
             
-            //Message from Server
+
+
+            /***********************/
+            /* Message from Server */
+            /***********************/
+
             else if(events[i].data.fd == my_socketfd)
             {            
-                //Return to receiving a long message if it's still pending
-                if(pending_long_msg == 1)
+                if(events[i].events & EPOLLRDHUP)
                 {
-                    recv_long_msg();
-                    continue;
-                }
-                
-                //Otherwise, receive a regular new message from the server
-                last_received = recv_msg(buffer, BUFSIZE);
-                if(!last_received)
+                    printf("Connection with the server has been closed.\n");
                     return;
+                }
 
-                if(buffer[0] == '!')
-                    parse_control_message(buffer);
-                else
-                    printf("%s\n", buffer);
+                else if(events[i].events & EPOLLIN)
+                {
+                    //Return to receiving a long message if it's still pending
+                    if(pending_msg.pending_op == RECVING_OP)
+                    {
+                        transfer_next_common(my_socketfd, &pending_msg);
+
+                        if(pending_msg.pending_op != NO_XFER_OP)
+                        continue;
+                    }
+                    
+                    //Otherwise, receive a regular new message from the server
+                    else
+                    {
+                        last_received = recv_msg_client(my_socketfd, buffer, BUFSIZE);
+                        if(last_received <= 0)
+                            return;
+                    }
+                    
+                    if(buffer[0] == '!')
+                        parse_control_message(buffer);
+                    else
+                        printf("%s\n", buffer);
+                }
+
+                else if(events[i].events & EPOLLOUT)
+                {
+                    //Return to receiving a long message if it's still pending
+                    if(pending_msg.pending_op == SENDING_OP)
+                    {
+                        transfer_next_common(my_socketfd, &pending_msg);
+
+                        if(pending_msg.pending_op != NO_XFER_OP)
+                        continue;
+                    }
+                }
             }
+                
+                
+            /*******************************************/
+            /* Transfer connections (and related fd's) */
+            /*******************************************/
 
-            //Data from other transfer connections (or related fd's)
             else
             {   
                 if(!file_transfers)
@@ -552,10 +483,12 @@ void client(const char* hostname, const unsigned int port,  char *username)
 
     if(!name_is_valid(username))
         return;
-    
-    buffer = calloc(BUFSIZE, sizeof(char));
+
     my_username = username;
     printf("Running as client with username: %s...\n", username);
+
+    buffer = calloc(BUFSIZE, sizeof(char));
+    memset(&pending_msg, 0 ,sizeof(Pending_Msg));
 
 
     /*Setup epoll to allow multiplexed IO to serve multiple clients*/

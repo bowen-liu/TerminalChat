@@ -21,12 +21,9 @@ typedef struct {
 
     /*Userinfo*/
     char username[USERNAME_LENG+1];
-    int is_admin :1;
 
     /*Pending Long Message (if any)*/
-    char* pending_buffer;
-    size_t pending_size;
-    size_t pending_processed;
+    Pending_Msg pending_msg;
 
     /*Descriptors for other server components*/
     struct namelist *groups_joined;

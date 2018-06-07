@@ -3,11 +3,17 @@ CFLAGS= -g
 
 all : clean common.o server.o client.o main
 
-#Common/Libraries
+
+#Third Party Libraries
 crc32.o:
 	$(CC) $(CFLAGS) -c library/crc32/crc32.c
 
-common.o: crc32.o
+
+#Common
+sendrecv.o:
+	$(CC) $(CFLAGS) -c common/sendrecv.c
+
+common.o: crc32.o sendrecv.o
 	$(CC) $(CFLAGS) -c common/common.c
 
 

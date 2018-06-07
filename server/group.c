@@ -9,7 +9,7 @@ char *bcast_buffer;                                 //buffer used to broadcast m
 
 
 /******************************/
-/*         Initialization         */
+/*      Initialization        */
 /******************************/
 
 void create_lobby_group()
@@ -275,7 +275,7 @@ int userlist_group(char *group_name)
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
-    send_new_long_msg(userlist_msg, userlist_size);
+    send_msg(current_client, userlist_msg, userlist_size);
     free(userlist_msg);
 
     return mcount;
@@ -487,8 +487,7 @@ int join_group()
 
     //Inform the new member that the join was sucessful
     sprintf(buffer, "!groupjoined=%s", group->groupname);
-    if(!send_msg(current_client, buffer, strlen(buffer)+1))
-        return 0;
+    send_msg(current_client, buffer, strlen(buffer)+1);
 
     //Announce to other existing members that a new member has joined the group
     sprintf(buffer, "!joinedgroup=%s,user=%s", group->groupname, current_client->username);
@@ -519,8 +518,7 @@ static int invite_to_group_direct(Group *group, User *user)
 
     //Send an invite to the requested user to join the group
     sprintf(invite_msg, "!groupinvite=%s,sender=%s", group->groupname, current_client->username);
-    if(!send_msg(user->c, invite_msg, strlen(invite_msg)+1))
-        return 0;
+    send_msg(user->c, invite_msg, strlen(invite_msg)+1);
 
     return 1;
 }
@@ -710,7 +708,7 @@ int group_filelist()
         msg_size += printed;
     }
 
-    send_new_long_msg(filelist_msg, msg_size+1);
+    send_msg(current_client, filelist_msg, msg_size+1);
     free(filelist_msg);
 
     return file_count;

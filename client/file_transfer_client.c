@@ -712,7 +712,7 @@ int accept_incoming_file()
     //Tell the server I am accepting this file
     sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
             file_transfers->filename, file_transfers->filesize, file_transfers->checksum, file_transfers->target_name, file_transfers->token);
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+    send_msg_client(buffer, strlen(buffer)+1);
 
     //Dial a new connection for the file transfer
     new_recv_connection(file_transfers);
@@ -743,7 +743,7 @@ int reject_incoming_file()
     }
 
     sprintf(buffer, "!rejectfile=%s,reason=%s", target_name, "RecverDeclined");
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+    send_msg_client(buffer, strlen(buffer)+1);
 
     return 0;
 }
@@ -760,7 +760,7 @@ int cancel_ongoing_file_transfer()
     printf("Ongoing transfer has been cancelled.\n");
     sprintf(buffer,"!cancelfile=%s,reason=%s", 
             file_transfers->target_name, (file_transfers->operation == SENDING_OP)? "SenderCancelled":"RecverCancelled");
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+    send_msg_client(buffer, strlen(buffer)+1);
     cancel_transfer(file_transfers);
 
     return 0;

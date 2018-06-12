@@ -19,7 +19,7 @@ void group_invited()
 
     //Automatically accept it for now
     sprintf(buffer, "!joingroup @@%s", group_name);
-    send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+    send_msg_client(buffer, strlen(buffer)+1);
 }
 
 void group_joined()

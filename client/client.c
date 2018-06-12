@@ -52,9 +52,9 @@ static inline unsigned int transfer_next_client()
     return retval;
 }
 
-inline int send_msg_client(int socketfd, char* buffer, size_t size)
+inline int send_msg_client(char* buffer, size_t size)
 {
-    int retval = send_msg_common(socketfd, buffer, size, &pending_msg);
+    int retval = send_msg_common(my_socketfd, buffer, size, &pending_msg);
 
     if(retval < 0)
         exit(retval);
@@ -65,7 +65,7 @@ inline int send_msg_client(int socketfd, char* buffer, size_t size)
     return retval;
 }
 
-inline int recv_msg_client(int socketfd, char* buffer, size_t size)
+inline int recv_msg_client(char* buffer, size_t size)
 {
     int retval = recv_msg_common(my_socketfd, buffer, size, &pending_msg);
     
@@ -119,11 +119,11 @@ static int register_with_server()
 
     //Request a list of active users from the server
     sprintf(buffer, "!joingroup @@%s", LOBBY_GROUP_NAME);
-    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) <= 0)
+    if(send_msg_client(buffer, strlen(buffer)+1) <= 0)
         return 0;
     
     //Wait for server to reply
-    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
+    if(recv_msg_client(buffer, BUFSIZE) <= 0)
         return 0;
     
     //Parse the returned userlist
@@ -139,7 +139,7 @@ static int register_with_server()
 
     //Request a list of active users from the server
     strcpy(buffer, "!userlist");
-    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) < 0)
+    if(send_msg_client(buffer, strlen(buffer)+1) < 0)
         return 0;
 
     //The returned userlist will be interpreted later in the client main loop  
@@ -390,7 +390,7 @@ static inline void client_main_loop()
                     *(msg_body-1) = ' ';
 
                 //Transmit the line read from stdin to the server
-                send_msg_client(my_socketfd, buffer, strlen(buffer)+1);
+                send_msg_client(buffer, strlen(buffer)+1);
             }
             
 
@@ -426,7 +426,7 @@ static inline void client_main_loop()
                     //Otherwise, receive a regular new message from the server
                     else
                     {
-                        last_received = recv_msg_client(my_socketfd, buffer, BUFSIZE);
+                        last_received = recv_msg_client(buffer, BUFSIZE);
                         if(last_received <= 0)
                             return;
 

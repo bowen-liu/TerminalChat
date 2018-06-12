@@ -34,6 +34,24 @@ static void exit_cleanup()
 /*     Basic Send/Receive     */
 /******************************/
 
+static inline unsigned int transfer_next_client()
+{
+    int retval;
+
+    retval = transfer_next_common(my_socketfd, &pending_msg);
+    if(retval <= 0)
+        exit(0);
+    
+    //Remove the EPOLLOUT notification once long send has completed
+    if(pending_msg.pending_op == NO_XFER_OP)
+    {
+        update_epoll_events(epoll_fd, my_socketfd, CLIENT_EPOLL_FLAGS);
+        printf("Completed partial transfer.\n");
+    }
+    
+    return retval;
+}
+
 inline int send_direct_client(int socket, char* buffer, size_t size)
 {
     return send(socket, buffer, size, 0);
@@ -45,6 +63,9 @@ inline int send_msg_client(int socketfd, char* buffer, size_t size)
 
     if(retval < 0)
         exit(retval);
+
+    if(pending_msg.pending_op == SENDING_OP)
+        update_epoll_events(epoll_fd, my_socketfd, CLIENT_EPOLL_FLAGS | EPOLLOUT);
 
     return retval;
 }
@@ -332,8 +353,9 @@ static inline void client_main_loop()
      struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
      int bytes;
+
+     char *old_buffer;
      
-     //Send messages to the host forever
     while(1)
     {
         //Wait until epoll has detected some event in the registered fd's
@@ -394,24 +416,42 @@ static inline void client_main_loop()
                     //Return to receiving a long message if it's still pending
                     if(pending_msg.pending_op == RECVING_OP)
                     {
-                        transfer_next_common(my_socketfd, &pending_msg);
+                        transfer_next_client();
 
-                        if(pending_msg.pending_op != NO_XFER_OP)
-                        continue;
+                        if(pending_msg.pending_op == NO_XFER_OP)
+                        {
+                            printf("Done Receiving.\n");
+                            old_buffer = buffer;
+                            buffer = pending_msg.pending_buffer;
+                        }
+                        else
+                            continue; 
                     }
-                    
                     //Otherwise, receive a regular new message from the server
                     else
                     {
                         last_received = recv_msg_client(my_socketfd, buffer, BUFSIZE);
                         if(last_received <= 0)
                             return;
+
+                        //Did not finish receiving the incoming message
+                        if(pending_msg.pending_op != NO_XFER_OP)
+                            continue;
                     }
                     
+                    //Process the received message from server
                     if(buffer[0] == '!')
                         parse_control_message(buffer);
                     else
                         printf("%s\n", buffer);
+
+                    //Cleanup partial recv args, if used
+                    if(old_buffer)
+                    {
+                        buffer = old_buffer;
+                        old_buffer = NULL;
+                        clean_pending_msg(&pending_msg);
+                    }
                 }
 
                 else if(events[i].events & EPOLLOUT)
@@ -419,10 +459,11 @@ static inline void client_main_loop()
                     //Return to receiving a long message if it's still pending
                     if(pending_msg.pending_op == SENDING_OP)
                     {
-                        transfer_next_common(my_socketfd, &pending_msg);
+                        transfer_next_client();
 
-                        if(pending_msg.pending_op != NO_XFER_OP)
-                        continue;
+                        //Completed sending all pieces
+                        if(pending_msg.pending_op == NO_XFER_OP)
+                            clean_pending_msg(&pending_msg);
                     }
                 }
             }

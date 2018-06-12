@@ -144,8 +144,12 @@ static unsigned int transfer_next_pending(Client *c)
     
     //Remove the EPOLLOUT notification once long send has completed
     if(c->pending_msg.pending_op == NO_XFER_OP)
+    {
         update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
-
+        printf("Completed partial transfer.\n");
+    }
+    
+    return retval;
 }
 
 unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
@@ -313,7 +317,7 @@ static inline int register_client_connection()
 
 static inline int client_pm()
 {
-    char pmsg[MAX_MSG_LENG];
+    char pmsg[MAX_MSG_LENG + 2*USERNAME_LENG];
     User *target;
 
     //Do nothing if there is no message body
@@ -448,7 +452,7 @@ static inline int parse_client_command()
 /*    Core Server Operations  */
 /******************************/
 
-static inline int handle_new_connection()
+static int handle_new_connection()
 {    
     Client *new_client = calloc(1, sizeof(Client));
     current_client = new_client;
@@ -490,7 +494,7 @@ static inline int handle_new_connection()
     return 1;
 } 
 
-static inline int handle_client_msg()
+static int handle_client_msg(int use_pending_msg)
 {
     int bytes;
 
@@ -498,17 +502,17 @@ static inline int handle_client_msg()
     if(current_client->connection_type == TRANSFER_CONNECTION)
         return client_data_forward_sender_ready(); 
     
-    //Otherwise, read the regular user's message into the global buffer for further processing
-    bytes = recv_msg(current_client, buffer, BUFSIZE);
-    if(!bytes)
-        return 0;
-    
-    if(current_client->connection_type == UNREGISTERED_CONNECTION)
+    //If this connection is not yet registered, the client must register itself before anything else can be done.
+    else if(current_client->connection_type == UNREGISTERED_CONNECTION)
     {
+        bytes = recv_msg(current_client, buffer, BUFSIZE);
+        
+        if(!bytes)
+            return 0;
+        
         printf("Received %d bytes from %s:%d: \"%.*s\"\n", 
                 bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port), bytes, buffer);
 
-        //An unregistered client must register itself before doing anything else.
         if(strncmp(buffer, "!register:", 10) == 0)
             return register_client_connection();
 
@@ -519,9 +523,34 @@ static inline int handle_client_msg()
             return register_recv_transfer_connection();
 
         else
-            disconnect_client(current_client);
-        
+            disconnect_client(current_client);   
         return 0;
+    }
+
+    //Read regular user's message
+    if(use_pending_msg)
+    {
+        //will pending_msg.pending_buffer ever be bigger than the server's default buffer?
+        bytes = current_client->pending_msg.pending_size;
+        if(bytes > BUFSIZE)
+        {
+            printf("Too big for message buffer: %d bytes.\n", bytes);
+            clean_pending_msg(&current_client->pending_msg);
+            return 0;
+        }
+
+        memcpy(buffer, current_client->pending_msg.pending_buffer, current_client->pending_msg.pending_size);
+        clean_pending_msg(&current_client->pending_msg);
+    }
+    else
+    {
+        bytes = recv_msg(current_client, buffer, BUFSIZE);
+        if(!bytes)
+            return 0;
+        
+        //Message has not been received completely yet
+        if(current_client->pending_msg.pending_op != NO_XFER_OP)
+            return 1;
     }
 
     printf("Received from %s: \"%.*s\"\n", current_client->username, bytes, buffer);
@@ -536,16 +565,17 @@ static inline int handle_client_msg()
     {
         if(msg_target[1] == '@')
             return group_msg();
-        else
-            return client_pm();
+        return client_pm();
     }
 
     //If a regular message has no target, broadcast it to the lobby group 
-    return send_lobby(current_client, buffer, strlen(buffer)+1);
+    send_lobby(current_client, buffer, strlen(buffer)+1);
+    
+    return 1;
 }
 
 
-static inline int handle_stdin()
+static int handle_stdin()
 {
     size_t buffer_size = BUFSIZE;
     int bytes; 
@@ -633,15 +663,7 @@ static inline void server_main_loop()
 {
     struct epoll_event events[MAX_EPOLL_EVENTS];
     int ready_count, i;
-
-    //Spawn a new thread that monitors timer events
-    if(pthread_create(&timer_event_thread, NULL, (void*) &handle_timer_events, NULL) != 0)
-    {
-        printf("Failed to create timer event thread\n");
-        return;
-    }
     
-    //Continuously handle network events
     while(1)
     {
         //Wait until epoll has detected some event in the registered socket fd's
@@ -687,25 +709,37 @@ static inline void server_main_loop()
                 {
                     if(current_client->pending_msg.pending_op == RECVING_OP)
                     {
-                        transfer_next_common(current_client->socketfd, &current_client->pending_msg);
+                        transfer_next_pending(current_client);
                         
                         //Check if the entire message has been received
-                        if(current_client->pending_msg.pending_op != NO_XFER_OP)
-                            continue;
+                        if(current_client->pending_msg.pending_op == NO_XFER_OP)
+                            handle_client_msg(1);
+                        continue;
                     }
                         
-                    handle_client_msg();
+                    handle_client_msg(0);
                 }
                     
 
                 //Handle EPOLLOUT (ready for writing) if the client has pending long messages
                 else if(events[i].events & EPOLLOUT)
                 {
-                    if(current_client->pending_msg.pending_op == SENDING_OP)
-                        transfer_next_common(current_client->socketfd, &current_client->pending_msg);
-
-                    else if(current_client->connection_type == TRANSFER_CONNECTION)
+                    if(current_client->connection_type == TRANSFER_CONNECTION)
                         client_data_forward_recver_ready();
+                    
+                    else if(current_client->pending_msg.pending_op == SENDING_OP)
+                    {
+                        transfer_next_pending(current_client);
+                        //printf("\nBuffer AFTER sent: \"%s\"\n", current_client->pending_msg.pending_buffer);
+
+                        if(current_client->pending_msg.pending_op == NO_XFER_OP)
+                        {
+                            clean_pending_msg(&current_client->pending_msg);
+                            continue;
+                        }
+                    } 
+                    else
+                        printf("Unknown EPOLLOUT\n");
                 }
             }    
         }
@@ -792,6 +826,13 @@ void server(const char* hostname, const unsigned int port)
     }
 
     printf("Listening for new client connections at %s:%u...\n", ipaddr_used, ntohs(server_addr.sin_port));
+
+    /*Spawn a new thread that monitors timer events*/
+    if(pthread_create(&timer_event_thread, NULL, (void*) &handle_timer_events, NULL) != 0)
+    {
+        printf("Failed to create timer event thread\n");
+        return;
+    }
 
     /*Begin handling requests*/
     server_main_loop();

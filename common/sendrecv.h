@@ -20,6 +20,8 @@ typedef struct {
 
 int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p);
 int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p);
+
 int transfer_next_common(int socket, Pending_Msg *p);
+void clean_pending_msg(Pending_Msg *p);
 
 #endif

@@ -25,7 +25,7 @@
 #include "sendrecv.h"
 
 
-#define DEFAULT_SERVER_PORT     6996
+#define DEFAULT_SERVER_PORT     16996
 #define LOBBY_GROUP_NAME        ((const char*) "all")
 
 #define USERNAME_LENG           32                                  //Maximum length of usernames and group names
@@ -33,7 +33,7 @@
 #define XFER_BUFSIZE            1048576                             //Buffer size used to hold a piece of data during file transfer
 #define MAX_MSG_LENG            512                                 //Maximum size of messages can be entered by the user
 
-#define LONG_RECV_PAGE_SIZE     64                                  //For testing long send/recv
+#define LONG_RECV_PAGE_SIZE     32                                  //For testing long send/recv
 
 
 /*File Transfer*/

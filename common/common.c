@@ -339,3 +339,13 @@ char* plain_name(char *name)
     
     return plain_name;
 }
+
+void print_char_by_char(char *str, size_t len)
+{
+    size_t i;
+
+    printf("\n");
+    for(i=0; i<len; i++)
+        printf("%c", str[i]);
+    printf("\n");
+}

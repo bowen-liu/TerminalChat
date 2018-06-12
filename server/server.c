@@ -152,11 +152,6 @@ static unsigned int transfer_next_pending(Client *c)
     return retval;
 }
 
-unsigned int send_msg_direct(int socketfd, char* buffer, size_t size)
-{
-    return send(socketfd, buffer, size, 0);
-}
-
 unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
     int retval;
@@ -199,7 +194,6 @@ unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int inclu
     return count;
 }
 
-
 unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
     int retval; 
@@ -220,6 +214,7 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
 /*      Client Operations     */
 /******************************/
 
+//Note: This function does not handle partial sends/recvs, as it deals solely with unconnected clients
 static inline int register_client_connection()
 {
     char *username = malloc(USERNAME_LENG+1);
@@ -238,7 +233,7 @@ static inline int register_client_connection()
     sscanf(buffer, "!register:username=%s", username);
     if(!name_is_valid(username))
     {
-        send_msg(current_client, "InvalidUsername", 16);
+        send_direct(current_client->socketfd, "InvalidUsername", 16);
         disconnect_client(current_client);
         return 0;
     }
@@ -272,7 +267,7 @@ static inline int register_client_connection()
         if(++duplicates > max_duplicates_allowed)
         {
             printf("The username \"%s\" cannot support further clients.\n", username);
-            send_msg(current_client, "InvalidUsername", 16);
+            send_direct(current_client->socketfd, "InvalidUsername", 16);
             disconnect_client(current_client);
             return 0;
         }
@@ -302,7 +297,7 @@ static inline int register_client_connection()
 
     printf("Registering user \"%s\"\n", current_client->username);
     sprintf(buffer, "!regreply:username=%s", current_client->username);
-    send_msg(current_client, buffer, strlen(buffer)+1);
+    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
 
     //Announce to all online users that a new user has joined
     /*sprintf(buffer, "!useronline=%s", current_client->username);
@@ -478,7 +473,7 @@ static int handle_new_connection()
         return 0;    
 
     //Send a greeting to the client
-    if(!send_msg(new_client, "Hello World!", 13))
+    if(!send_direct(new_client->socketfd, "Hello World!", 13))
         return 0;
 
     //Set a timer that disconnects the unregistered client after a certain period of no registration
@@ -503,9 +498,10 @@ static int handle_client_msg(int use_pending_msg)
         return client_data_forward_sender_ready(); 
     
     //If this connection is not yet registered, the client must register itself before anything else can be done.
+    //The client/server will not deal with partial send/recvs during this stage.
     else if(current_client->connection_type == UNREGISTERED_CONNECTION)
     {
-        bytes = recv_msg(current_client, buffer, BUFSIZE);
+        bytes = recv_direct(current_client->socketfd, buffer, BUFSIZE);
         
         if(!bytes)
             return 0;

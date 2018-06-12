@@ -72,6 +72,11 @@ int transfer_next_common(int socket, Pending_Msg *p)
 /*          SENDING         */
 /****************************/
 
+int send_direct(int socketfd, char* buffer, size_t size)
+{
+    return send(socketfd, buffer, size, 0);
+}
+
 int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
 {
     int bytes;
@@ -135,6 +140,11 @@ int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
 /****************************/
 /*         RECEIVING        */
 /****************************/
+
+int recv_direct(int socketfd, char* buffer, size_t size)
+{
+    return recv(socketfd, buffer, size, 0);
+}
 
 int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
 {

@@ -267,6 +267,8 @@ void transfer_invite_expired(Client *c)
 /* New Incoming File Transfer Connections */
 /******************************************/ 
 
+//Note: Both functions does not handle partial sends/recvs, as it deals solely with unconnected clients
+
 int register_send_transfer_connection()
 {
     char sender_name[USERNAME_LENG+1], recver_name[USERNAME_LENG+1];
@@ -293,7 +295,7 @@ int register_send_transfer_connection()
     if(!validate_transfer(&request_args, sender_name, recver_name, &myself_ret, &target_ret))
     {
         printf("Mismatching SENDING transfer connection.\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_direct(current_client->socketfd, "WrongInfo", 10);
         disconnect_client(current_client);
         return 0;
     }
@@ -302,7 +304,7 @@ int register_send_transfer_connection()
     if(myself_ret.target_type != USER_TARGET)
     {
         printf("Sender is not a user!\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_direct(current_client->socketfd, "WrongInfo", 10);
         disconnect_client(current_client);
         return 0;
     }
@@ -327,7 +329,7 @@ int register_send_transfer_connection()
     else
     {
         printf("Target is not a user/group!\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_direct(current_client->socketfd, "WrongInfo", 10);
         disconnect_client(current_client);
         return 0;
     }
@@ -336,7 +338,7 @@ int register_send_transfer_connection()
     current_client->file_transfers = xferargs;
 
     sprintf(buffer, "Accepted");
-    send_msg(current_client, buffer, strlen(buffer)+1);
+    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
     printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
             xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
 
@@ -374,7 +376,7 @@ int register_recv_transfer_connection()
     if(!validate_transfer(&request_args, recver_name, sender_name, &myself_ret, &target_ret))
     {
         printf("Mismatching RECEIVING transfer connection.\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_direct(current_client->socketfd, "WrongInfo", 10);
         disconnect_client(current_client);
         return 0;
     }
@@ -399,7 +401,7 @@ int register_recv_transfer_connection()
     else
     {
         printf("Target is not a user/group!\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_direct(current_client->socketfd, "WrongInfo", 10);
         disconnect_client(current_client);
         return 0;
     }
@@ -408,7 +410,7 @@ int register_recv_transfer_connection()
     current_client->file_transfers = xferargs;
 
     sprintf(buffer, "Accepted");
-    send_msg(current_client, buffer, strlen(buffer)+1);
+    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
             xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
@@ -622,8 +624,8 @@ int client_data_forward_recver_ready()
         return 0;
     }
 
-    bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes_remaining);
-    //bytes_sent = send_msg_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
+    bytes_sent = send_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], bytes_remaining);
+    //bytes_sent = send_direct(current_client->socketfd, &sender_xferargs->piece_buffer[sender_xferargs->piece_transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
     if(bytes_sent < 0)
     {
         perror("Failed to send the current piece");
@@ -679,7 +681,7 @@ int client_data_forward_sender_ready()
         
 
     //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
-    bytes_recvd = recv_msg(current_client, xferargs->piece_buffer, XFER_BUFSIZE);
+    bytes_recvd = recv_direct(current_client->socketfd, xferargs->piece_buffer, XFER_BUFSIZE);
     if(!bytes_recvd)
         return 0;
 
@@ -836,8 +838,8 @@ static int group_send_next_piece()
     size_t bytes_remaining = xferargs->filesize - xferargs->transferred;
     int bytes_sent;
     
-    bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], bytes_remaining);
-    //bytes_sent = send_msg_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
+    bytes_sent = send_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], bytes_remaining);
+    //bytes_sent = send_direct(current_client->socketfd, &xferargs->file_buffer[xferargs->transferred], (LONG_RECV_PAGE_SIZE > bytes_remaining)? bytes_remaining:LONG_RECV_PAGE_SIZE);
     if(bytes_sent < 0)
     {
         perror("Failed to send the current piece");
@@ -867,7 +869,7 @@ static int group_recv_next_piece()
     int bytes_recvd;
 
     //Receive a new piece of data that was sent by the sender, if the old piece has been completely forwarded already
-    bytes_recvd = recv_msg(current_client, xferargs->piece_buffer, XFER_BUFSIZE);
+    bytes_recvd = recv_direct(current_client->socketfd, xferargs->piece_buffer, XFER_BUFSIZE);
     if(!bytes_recvd)
         return 0;
 

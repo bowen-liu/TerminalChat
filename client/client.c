@@ -52,11 +52,6 @@ static inline unsigned int transfer_next_client()
     return retval;
 }
 
-inline int send_direct_client(int socket, char* buffer, size_t size)
-{
-    return send(socket, buffer, size, 0);
-}
-
 inline int send_msg_client(int socketfd, char* buffer, size_t size)
 {
     int retval = send_msg_common(socketfd, buffer, size, &pending_msg);
@@ -89,21 +84,22 @@ static void parse_userlist();
 static int register_with_server()
 {   
     /*This function is called right after a connection to the server is made, and before the connection is registered to epoll. 
-    Therefore, all send/recv here are still blocking, and thus all actions done here are synchronous. */
+    Therefore, all send/recv here are still blocking, and thus all actions done here are synchronous. 
+    Additionally, the client/server will not deal with partial send/recvs before registration is complete*/
 
     //Receive a greeting message from the server upon connecting to the server
-    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
+    if(recv_direct(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
     printf("%s\n", buffer);
 
     //Register my desired username
     printf("Registering username \"%s\"...\n", my_username);
     sprintf(buffer, "!register:username=%s", my_username);
-    if(send_msg_client(my_socketfd, buffer, strlen(buffer)+1) <= 0)
+    if(send_direct(my_socketfd, buffer, strlen(buffer)+1) <= 0)
         return 0;
 
     //Parse registration reply from server
-    if(recv_msg_client(my_socketfd, buffer, BUFSIZE) <= 0)
+    if(recv_direct(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
 
     //Did we receive an anticipated !regreply?

@@ -17,6 +17,8 @@ typedef struct {
 
 } Pending_Msg;
 
+int send_direct(int socketfd, char* buffer, size_t size);
+int recv_direct(int socketfd, char* buffer, size_t size);
 
 int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p);
 int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p);

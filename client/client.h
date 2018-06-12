@@ -20,7 +20,6 @@ extern char *msg_target;
 extern char *msg_body;
 
 
-int send_direct_client(int socket, char* buffer, size_t size);
 int send_msg_client(int socketfd, char* buffer, size_t size);
 int recv_msg_client(int socketfd, char* buffer, size_t size);
 

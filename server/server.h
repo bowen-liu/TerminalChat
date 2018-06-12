@@ -35,7 +35,6 @@ extern int timers_epollfd;
 
 
 /*Send/recv*/
-unsigned int send_msg_direct(int socketfd, char* buffer, size_t size);
 unsigned int send_msg(Client *c, char* buffer, size_t size);
 unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
 void send_new_long_msg(char* buffer, size_t size);

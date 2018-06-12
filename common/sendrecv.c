@@ -77,14 +77,11 @@ int send_direct(int socketfd, char* buffer, size_t size)
     return send(socketfd, buffer, size, 0);
 }
 
-int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
+static int send_msg_common_internal(int socket, char* buffer, size_t size, Pending_Msg *p)
 {
     int bytes;
     char *headered_buf;
     size_t total_size;
-
-    if(size == 0)
-        return 0;
 
     //Only send a new message if there's no pending operation? We can also consider some kind of queueing...
     if(p->pending_op != NO_XFER_OP)
@@ -93,8 +90,6 @@ int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
         return 0;
     } 
 
-    //Limit this message if too long
-    size = (size > MAX_MSG_LENG)? MAX_MSG_LENG : size;
     total_size = sizeof(uint16_t) + size;
 
     //Create a new headered message for sending
@@ -135,6 +130,24 @@ int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
     return bytes;
 }
 
+int send_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
+{
+    if(size == 0)
+        return 0;
+
+    //Truncate the message if too long
+    size = (size > MAX_MSG_LENG)? MAX_MSG_LENG : size;
+    return send_msg_common_internal(socket, buffer, size, p);
+}
+
+//Will not truncate long messages. Intended for server to forward commands only
+int send_msg_notruncate(int socket, char* buffer, size_t size, Pending_Msg *p)
+{
+    if(size == 0)
+        return 0;
+
+    return send_msg_common_internal(socket, buffer, size, p);
+}
 
 
 /****************************/

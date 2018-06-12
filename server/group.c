@@ -275,7 +275,7 @@ int userlist_group(char *group_name)
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
-    send_msg(current_client, userlist_msg, userlist_size);
+    send_long_msg(current_client, userlist_msg, userlist_size);
     free(userlist_msg);
 
     return mcount;
@@ -708,7 +708,7 @@ int group_filelist()
         msg_size += printed;
     }
 
-    send_msg(current_client, filelist_msg, msg_size+1);
+    send_long_msg(current_client, filelist_msg, msg_size+1);
     free(filelist_msg);
 
     return file_count;

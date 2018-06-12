@@ -170,6 +170,24 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
     return retval;
 }
 
+unsigned int send_long_msg(Client *c, char* buffer, size_t size)
+{
+    int retval;
+    
+    retval = send_msg_notruncate(c->socketfd, buffer, size, &c->pending_msg);
+    
+    if(retval < 0)
+        disconnect_client(c);
+    else if(retval == 0)
+        return 0;
+
+    //Start of a new long send. Register the client's FD to signal on EPOLLOUT
+    if(c->pending_msg.pending_op == SENDING_OP)
+        update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
+
+    return retval;
+}
+
 unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
 {
     int count = 0;
@@ -368,7 +386,7 @@ static inline int userlist()
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
-    send_msg(current_client, userlist_msg, userlist_size);
+    send_long_msg(current_client, userlist_msg, userlist_size);
     free(userlist_msg);
 
     return total_users;

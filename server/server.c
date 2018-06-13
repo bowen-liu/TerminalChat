@@ -632,7 +632,7 @@ static void handle_timer_events()
             if(!current_timer_event)
             {
                 printf("Event is no longer present.\n");
-                continue;
+                goto handle_timer_events_continue;
             }
 
             //Read the timer counter to silence epoll
@@ -667,6 +667,8 @@ static void handle_timer_events()
             }
             
         }
+
+handle_timer_events_continue:
 
         pthread_mutex_unlock(&client_lock);
     }

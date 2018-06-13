@@ -1,11 +1,19 @@
 #include "client.h"
 
+#include <pthread.h>
+#include <readline/readline.h>      //sudo apt-get install libreadline-dev 
+#include <readline/history.h>
+
+
 char* my_username;
 
 //Socket for communicating with the server
 int my_socketfd;                                    //My (client) main socket connection with the server
 struct sockaddr_in server_addr;                     //Server's information struct
 int epoll_fd;
+
+pthread_mutex_t buffer_lock = PTHREAD_MUTEX_INITIALIZER;
+pthread_t connection_thread;
 
 //Receive buffers
 char *buffer;
@@ -15,10 +23,6 @@ static size_t last_received;
 
 //Used if the current message is still being sent or received
 Pending_Msg pending_msg;
-
-//Other clients
-static Member *online_members = NULL;
-static unsigned int users_online = 0;
 
 
 
@@ -196,41 +200,13 @@ static int handle_user_command()
 /*  Server Control Messages   */
 /******************************/
 
-/*static void user_offline()
-{
-    char target_username[USERNAME_LENG+1];
-    Member *member;
-
-    sscanf(buffer, "!useroffline=%s", target_username);
-    printf("User \"%s\" has disconnected.\n", target_username);
-
-    HASH_FIND_STR(online_members, target_username, member);
-    if(!member)
-    {
-        printf("Could not find \"%s\" in the online list!\n", target_username);
-        return;
-    }
-    HASH_DEL(online_members, member);
-    --users_online;
-}
-
-
-static void user_online()
-{
-    Member *member = malloc(sizeof(Member));
-
-    sscanf(buffer, "!useronline=%s", member->username);
-    printf("User \"%s\" has connected.\n", member->username);
-    HASH_ADD_STR(online_members, username, member);
-    ++users_online;
-}*/
-
 static void parse_userlist()
 {
     char group_name[USERNAME_LENG+1];
     char* newbuffer = buffer;
     char* token;
     Member *curr, *tmp;
+    unsigned int users_online;
 
     //Parse the header
     token = strtok(newbuffer, ",");
@@ -253,18 +229,7 @@ static void parse_userlist()
 
     //This is a global userlist
     else
-    {
-        //Delete the old global userlist if it already exists
-        if(online_members)
-        {
-            HASH_ITER(hh, online_members, curr, tmp) 
-            {
-                HASH_DEL(online_members, curr);
-                free(curr);
-            }
-        }
         printf("%u users are currently online:\n", users_online);
-    }
 
     //Extract each subsequent user's name
     while(token)
@@ -272,7 +237,6 @@ static void parse_userlist()
         printf("%s\n", token);
         curr = malloc(sizeof(Member));
         strcpy(curr->username, token);
-        HASH_ADD_STR(online_members, username, curr);
         
         token = strtok(NULL, ",");
     }
@@ -286,12 +250,6 @@ static void parse_control_message(char* cmd_buffer)
     
     if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
-
-    /*else if(strncmp("!useroffline=", buffer, 13) == 0)
-        user_offline();
-
-    else if(strncmp("!useronline=", buffer, 12) == 0)
-        user_online();*/
 
     /*Group operations. Implemented in group.c*/
 
@@ -345,12 +303,11 @@ static void parse_control_message(char* cmd_buffer)
 
 static inline void client_main_loop()
 {
-     static size_t buffer_size = BUFSIZE;
      struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
      int bytes;
 
-     char *old_buffer;
+     char *old_buffer = NULL;
      
     while(1)
     {
@@ -359,52 +316,24 @@ static inline void client_main_loop()
         if(ready_count < 0)
         {
             perror("epoll_wait failed!");
-            return;
+            exit(0);
         }
+
+        pthread_mutex_lock(&buffer_lock);
 
         for(i=0; i<ready_count; i++)
         {
-            //When the user enters a message from stdin
-            if(events[i].data.fd == 0)
-            {
-                //Read from stdin and remove the newline character. TODO: Use readline() maybe?
-                bytes = getline(&buffer, &buffer_size, stdin);
-                remove_newline(buffer);
-                --bytes;
-
-                //Do not transmit empty messages
-                if(strlen(buffer) < 1 || buffer[0] == '\n')
-                    continue;
-
-                seperate_target_command(buffer, &msg_target, &msg_body);
-
-                //If the client has specified a command, check if anything needs to be done on the client side immediately
-                if(msg_body && msg_body[0] == '!')
-                {
-                    if(!handle_user_command())
-                        continue;
-                }
-
-                //Restore the space between the target and message body, if it was removed by seperate_target_command() and hasn't been altered
-                if(msg_target && msg_body && *(msg_body-1) == '\0' )
-                    *(msg_body-1) = ' ';
-
-                //Transmit the line read from stdin to the server
-                send_msg_client(buffer, strlen(buffer)+1);
-            }
-            
-
 
             /***********************/
             /* Message from Server */
             /***********************/
 
-            else if(events[i].data.fd == my_socketfd)
+            if(events[i].data.fd == my_socketfd)
             {            
                 if(events[i].events & EPOLLRDHUP)
                 {
                     printf("Connection with the server has been closed.\n");
-                    return;
+                    exit(0);
                 }
 
                 else if(events[i].events & EPOLLIN)
@@ -421,18 +350,18 @@ static inline void client_main_loop()
                             buffer = pending_msg.pending_buffer;
                         }
                         else
-                            continue; 
+                            goto client_main_loop_continue; 
                     }
                     //Otherwise, receive a regular new message from the server
                     else
                     {
                         last_received = recv_msg_client(buffer, BUFSIZE);
                         if(last_received <= 0)
-                            return;
+                            exit(0);
 
                         //Did not finish receiving the incoming message
                         if(pending_msg.pending_op != NO_XFER_OP)
-                            continue;
+                            goto client_main_loop_continue;
                     }
                     
                     //Process the received message from server
@@ -440,6 +369,7 @@ static inline void client_main_loop()
                         parse_control_message(buffer);
                     else
                         printf("%s\n", buffer);
+
 
                     //Cleanup partial recv args, if used
                     if(old_buffer)
@@ -462,26 +392,25 @@ static inline void client_main_loop()
                             clean_pending_msg(&pending_msg);
                     }
                 }
-            }
-                
+            }   
                 
             /*******************************************/
             /* Transfer connections (and related fd's) */
             /*******************************************/
 
-            else
+            else if (file_transfers && events[i].data.fd == file_transfers->socketfd)
             {   
                 if(!file_transfers)
                 {
                     printf("No pending file transfers. Ignoring event...\n");
-                    continue;
+                    goto client_main_loop_continue;
                 }
                 
                 //Was this event raised by the timer, instead of the actual connection?
                 if(events[i].data.fd == file_transfers->timerfd)
                 {
                     print_transfer_progress();
-                    continue;
+                    goto client_main_loop_continue;
                 }
 
 
@@ -505,9 +434,62 @@ static inline void client_main_loop()
                 else if(events[i].events & EPOLLOUT)
                     file_send_next(file_transfers);
             }
+
+            else
+                printf("unknown fd: %d\n", events[i].data.fd);
         }
+
+client_main_loop_continue:
+
+        pthread_mutex_unlock(&buffer_lock);
     }
 
+}
+
+
+void handle_client_input()
+{
+    char *str = NULL;
+    char *prompt = NULL;
+    
+    while(1)
+    {
+        str = readline(prompt);
+        pthread_mutex_lock(&buffer_lock);
+       
+        //Do not transmit empty messages
+        if(!str)
+            goto handle_client_input_cleanup;
+
+        if(strlen(str) < 1 || str[0] == '\n')
+             goto handle_client_input_cleanup;
+
+        strcpy(buffer, str);
+        seperate_target_command(buffer, &msg_target, &msg_body);
+
+        //If the client has specified a command, check if anything needs to be done on the client side immediately
+        if(msg_body && msg_body[0] == '!')
+        {
+            if(!handle_user_command())
+                 goto handle_client_input_cleanup;
+        }
+
+        //Restore the space between the target and message body, if it was removed by seperate_target_command() and hasn't been altered
+        if(msg_target && msg_body && *(msg_body-1) == '\0')
+            *(msg_body-1) = ' ';
+
+        //Transmit the line read from stdin to the server
+        send_msg_client(buffer, strlen(buffer)+1);
+
+handle_client_input_cleanup:
+
+        if(str)
+        {
+            free(str);
+            str = NULL;
+        }
+        pthread_mutex_unlock(&buffer_lock);
+    }
 }
 
 
@@ -526,7 +508,6 @@ void client(const char* hostname, const unsigned int port,  char *username)
 
     buffer = calloc(BUFSIZE, sizeof(char));
     memset(&pending_msg, 0 ,sizeof(Pending_Msg));
-
 
     /*Setup epoll to allow multiplexed IO to serve multiple clients*/
     epoll_fd = epoll_create1(0);
@@ -573,10 +554,13 @@ void client(const char* hostname, const unsigned int port,  char *username)
     fcntl(my_socketfd, F_SETFL, O_NONBLOCK);
     if(!register_fd_with_epoll(epoll_fd, my_socketfd, CLIENT_EPOLL_FLAGS))
         return;   
-    
-    /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(epoll_fd, 0, EPOLLIN))
-        return; 
 
-    client_main_loop();
+    /*Spawn the main network/event loop as a seperate thread*/
+    if(pthread_create(&connection_thread, NULL, (void*) &client_main_loop, NULL) != 0)
+    {
+        printf("Failed to create main connection thread\n");
+        return;
+    }
+
+    handle_client_input();
 }

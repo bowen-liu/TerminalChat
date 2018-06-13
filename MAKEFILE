@@ -41,7 +41,7 @@ client.o: group_client.o file_transfer_client.o
 
 #Main
 main: server.o client.o
-	$(CC) $(CFLAGS) -pthread -o a.out main.c *.o
+	$(CC) $(CFLAGS) -pthread -o a.out main.c *.o -lreadline
 	rm -f *.o
 
 clean:

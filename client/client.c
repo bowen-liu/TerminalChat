@@ -205,7 +205,6 @@ static void parse_userlist()
     char group_name[USERNAME_LENG+1];
     char* newbuffer = buffer;
     char* token;
-    Member *curr, *tmp;
     unsigned int users_online;
 
     //Parse the header
@@ -235,9 +234,6 @@ static void parse_userlist()
     while(token)
     {
         printf("%s\n", token);
-        curr = malloc(sizeof(Member));
-        strcpy(curr->username, token);
-        
         token = strtok(NULL, ",");
     }
 }
@@ -407,7 +403,6 @@ static inline void client_main_loop()
 {
      struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
-     int bytes;
      
     while(1)
     {

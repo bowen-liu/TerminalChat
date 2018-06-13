@@ -301,13 +301,113 @@ static void parse_control_message(char* cmd_buffer)
 /*   Core Client Operations   */
 /******************************/
 
+static void handle_main_socket_events(int events)
+{         
+    char *old_buffer = NULL;
+    
+    /*Server has dropped our connection*/
+    if(events & EPOLLRDHUP)
+    {
+        printf("Connection with the server has been closed.\n");
+        exit(0);
+    }
+
+
+    /*Server has sent us new message to read*/
+    else if(events & EPOLLIN)
+    {
+        //Return to receiving a long message if it's still pending
+        if(pending_msg.pending_op == RECVING_OP)
+        {
+            transfer_next_client();
+
+            if(pending_msg.pending_op == NO_XFER_OP)
+            {
+                printf("Done Receiving.\n");
+                old_buffer = buffer;
+                buffer = pending_msg.pending_buffer;
+            }
+            else
+                return;
+        }
+
+        //Otherwise, receive a regular new message from the server
+        else
+        {
+            last_received = recv_msg_client(buffer, BUFSIZE);
+            if(last_received <= 0)
+                exit(0);
+
+            //Did not finish receiving the incoming message
+            if(pending_msg.pending_op != NO_XFER_OP)
+                return;
+        }
+        
+        //Process the received message from server
+        if(buffer[0] == '!')
+            parse_control_message(buffer);
+        else
+            printf("%s\n", buffer);
+
+
+        //Cleanup partial recv args, if used
+        if(old_buffer)
+        {
+            buffer = old_buffer;
+            old_buffer = NULL;
+            clean_pending_msg(&pending_msg);
+        }
+    }
+
+
+    /*Server/socket is ready to continue receive partial sends from us*/
+    else if(events & EPOLLOUT)
+    {
+        //Return to receiving a long message if it's still pending
+        if(pending_msg.pending_op == SENDING_OP)
+        {
+            transfer_next_client();
+
+            //Completed sending all pieces
+            if(pending_msg.pending_op == NO_XFER_OP)
+                clean_pending_msg(&pending_msg);
+        }
+    }
+}
+
+
+static void handle_transfer_connection_events(int events)
+{
+    if(!file_transfers)
+        printf("No pending file transfers. Ignoring event...\n");
+
+    //The transfer connection has been terminated by the server (upon completion or failure)
+    if(events & EPOLLRDHUP)
+    {
+        printf("Server has closed our transfer connection.\n");
+        
+        if(file_transfers->transferred != file_transfers->filesize)
+            printf("Transferred %zu\\%zu bytes with \"%s\" before failure.\n", 
+                    file_transfers->transferred, file_transfers->filesize, file_transfers->target_name);
+
+        cancel_transfer(file_transfers);
+    }   
+
+    //The transfer connection is ready for receiving
+    else if(events & EPOLLIN)
+        file_recv_next(file_transfers);
+    
+    //The transfer connection is ready for sending
+    else if(events & EPOLLOUT)
+        file_send_next(file_transfers);
+}
+
+
 static inline void client_main_loop()
 {
      struct epoll_event events[MAX_EPOLL_EVENTS];
      int ready_count, i;
      int bytes;
-
-     char *old_buffer = NULL;
      
     while(1)
     {
@@ -323,123 +423,20 @@ static inline void client_main_loop()
 
         for(i=0; i<ready_count; i++)
         {
-
-            /***********************/
             /* Message from Server */
-            /***********************/
-
             if(events[i].data.fd == my_socketfd)
-            {            
-                if(events[i].events & EPOLLRDHUP)
-                {
-                    printf("Connection with the server has been closed.\n");
-                    exit(0);
-                }
-
-                else if(events[i].events & EPOLLIN)
-                {
-                    //Return to receiving a long message if it's still pending
-                    if(pending_msg.pending_op == RECVING_OP)
-                    {
-                        transfer_next_client();
-
-                        if(pending_msg.pending_op == NO_XFER_OP)
-                        {
-                            printf("Done Receiving.\n");
-                            old_buffer = buffer;
-                            buffer = pending_msg.pending_buffer;
-                        }
-                        else
-                            goto client_main_loop_continue; 
-                    }
-                    //Otherwise, receive a regular new message from the server
-                    else
-                    {
-                        last_received = recv_msg_client(buffer, BUFSIZE);
-                        if(last_received <= 0)
-                            exit(0);
-
-                        //Did not finish receiving the incoming message
-                        if(pending_msg.pending_op != NO_XFER_OP)
-                            goto client_main_loop_continue;
-                    }
-                    
-                    //Process the received message from server
-                    if(buffer[0] == '!')
-                        parse_control_message(buffer);
-                    else
-                        printf("%s\n", buffer);
-
-
-                    //Cleanup partial recv args, if used
-                    if(old_buffer)
-                    {
-                        buffer = old_buffer;
-                        old_buffer = NULL;
-                        clean_pending_msg(&pending_msg);
-                    }
-                }
-
-                else if(events[i].events & EPOLLOUT)
-                {
-                    //Return to receiving a long message if it's still pending
-                    if(pending_msg.pending_op == SENDING_OP)
-                    {
-                        transfer_next_client();
-
-                        //Completed sending all pieces
-                        if(pending_msg.pending_op == NO_XFER_OP)
-                            clean_pending_msg(&pending_msg);
-                    }
-                }
-            }   
-                
-            /*******************************************/
+                handle_main_socket_events(events[i].events);
+  
             /* Transfer connections (and related fd's) */
-            /*******************************************/
-
-            else if (file_transfers && events[i].data.fd == file_transfers->socketfd)
+            else if (file_transfers)
             {   
-                if(!file_transfers)
-                {
-                    printf("No pending file transfers. Ignoring event...\n");
-                    goto client_main_loop_continue;
-                }
-                
-                //Was this event raised by the timer, instead of the actual connection?
-                if(events[i].data.fd == file_transfers->timerfd)
-                {
+                if(events[i].data.fd == file_transfers->socketfd)
+                    handle_transfer_connection_events(events[i].events);
+
+                else if(events[i].data.fd == file_transfers->timerfd)
                     print_transfer_progress();
-                    goto client_main_loop_continue;
-                }
-
-
-                //The transfer connection has been terminated by the server (upon completion or failure)
-                if(events[i].events & EPOLLRDHUP)
-                {
-                    printf("Server has closed our transfer connection.\n");
-                    
-                    if(file_transfers->transferred != file_transfers->filesize)
-                        printf("Transferred %zu\\%zu bytes with \"%s\" before failure.\n", 
-                                file_transfers->transferred, file_transfers->filesize, file_transfers->target_name);
-
-                    cancel_transfer(file_transfers);
-                }   
-
-                //The transfer connection is ready for receiving
-                else if(events[i].events & EPOLLIN)
-                    file_recv_next(file_transfers);
-                
-                //The transfer connection is ready for sending
-                else if(events[i].events & EPOLLOUT)
-                    file_send_next(file_transfers);
             }
-
-            else
-                printf("unknown fd: %d\n", events[i].data.fd);
         }
-
-client_main_loop_continue:
 
         pthread_mutex_unlock(&buffer_lock);
     }

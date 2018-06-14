@@ -784,16 +784,156 @@ int unban_from_group()
     return 1;
 }
 
-
-//To be done
-int set_member_permission(Group *group, User *user, int new_permissions)
+int set_member_permission()
 {
-    return 0;
+    char change_msg[BUFSIZE];
+    char *newbuffer = msg_body, *token;
+    Group* group;
+    Group_Member *target_member;
+
+    IP_List *ban_entry;
+    char ipaddr_str[INET_ADDRSTRLEN];
+
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
+
+
+    if(!basic_group_permission_check(msg_target, &group, &target_member))
+        return 0;
+
+    //Check if the requesting user has suffice permissions to kick others
+    if(!(target_member->permissions & GRP_PERM_CAN_SETPERM))
+    {
+        printf("User \"%s\" tried to change user permissions from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Kick each member specified in the command
+    token = strtok(newbuffer, " ");                     //Skip the command header "!setuserperm"
+
+    //Read the target name
+    token = strtok(NULL, " "); 
+    if(!token)
+    {
+        printf("No user specified.\n");
+        send_msg(current_client, "UserNotFound", 13);
+        return 0;
+    }
+
+    HASH_FIND_STR(group->members, token, target_member);
+    if(target_member)
+    {
+        printf("User \"%s\" was not found.\n", token);
+        send_msg(current_client, "UserNotFound", 13);
+        return 0;
+    }
+
+
+    //Apply all permission changes 
+    token = strtok(NULL, " "); 
+    while(token)
+    {
+        if(strcmp(token, "CAN_TALK") == 0)
+            target_member->permissions |= GRP_PERM_CAN_TALK;
+        else if(strcmp(token, "CANNOT_TALK") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_TALK;
+        else if(strcmp(token, "CAN_INVITE") == 0)
+            target_member->permissions |= GRP_PERM_CAN_INVITE;
+        else if(strcmp(token, "CANNOT_INVITE") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_INVITE;
+        else if(strcmp(token, "CAN_PUTFILE") == 0)
+            target_member->permissions |= GRP_PERM_CAN_PUTFILE;
+        else if(strcmp(token, "CANNOT_PUTFILE") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_PUTFILE;
+        else if(strcmp(token, "CAN_GETFILE") == 0)
+            target_member->permissions |= GRP_PERM_CAN_GETFILE;
+        else if(strcmp(token, "CANNOT_GETFILE") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_GETFILE;
+        else if(strcmp(token, "CAN_KICK") == 0)
+            target_member->permissions |= GRP_PERM_CAN_KICK;
+        else if(strcmp(token, "CANNOT_KICK") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_KICK;
+        else if(strcmp(token, "CAN_SETPERM") == 0)
+            target_member->permissions |= GRP_PERM_CAN_SETPERM;
+        else if(strcmp(token, "CANNOT_SETPERM") == 0)
+            target_member->permissions &= ~GRP_PERM_CAN_SETPERM;
+        
+        else if(strcmp(token, "SET_ADMIN") == 0)
+            target_member->permissions = GRP_PERM_ADMIN | (target_member->permissions & GRP_PERM_HAS_JOINED);
+        else if(strcmp(token, "SET_USER") == 0)
+            target_member->permissions = GRP_PERM_DEFAULT | (target_member->permissions & GRP_PERM_HAS_JOINED);
+        
+        else
+        {
+            printf("Unknown operation \"%s\"\n", token);
+            send_msg(current_client, "UnknownOP", 10);
+        }
+        
+        sprintf(change_msg, "Applied permission change \"%s\" to user \"%s\" in group \"%s\", by \"%s\"",
+                token, target_member->username, group->groupname, current_client->username);
+        printf("%s\n", change_msg);
+        send_group(group, change_msg, strlen(change_msg)+1);
+
+        token = strtok(NULL, " ");
+    }
+
+    return 1;
 }
 
-int set_group_permission(Group *group, int new_permissions)
+int set_group_permission()
 {
-    return 0;
+    char change_msg[BUFSIZE];
+    char *newbuffer = msg_body, *token;
+    Group* group;
+    Group_Member *target_member;
+
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
+
+
+    if(!basic_group_permission_check(msg_target, &group, &target_member))
+        return 0;
+
+    //Check if the requesting user has suffice permissions to kick others
+    if(!(target_member->permissions & GRP_PERM_CAN_SETPERM))
+    {
+        printf("User \"%s\" tried to change user permissions from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Apply all permission changes 
+    token = strtok(newbuffer, " ");                     //Skip the command header "!setperm"
+    token = strtok(NULL, " "); 
+    while(token)
+    {
+        if(strcmp(token, "SET_INVITE_ONLY") == 0)
+            group->group_flags |= GRP_FLAG_INVITE_ONLY;
+        else if(strcmp(token, "RMV_INVITE_ONLY") == 0)
+            group->group_flags &= ~GRP_FLAG_INVITE_ONLY;
+        else if(strcmp(token, "SET_TRANSFER_ALLOWED") == 0)
+            group->group_flags |= GRP_FLAG_ALLOW_XFER;
+        else if(strcmp(token, "RMV_TRANSFER_ALLOWED") == 0)
+            group->group_flags &= ~GRP_FLAG_ALLOW_XFER;
+       
+        else
+        {
+            printf("Unknown operation \"%s\"\n", token);
+            send_msg(current_client, "UnknownOP", 10);
+        }
+        
+        sprintf(change_msg, "Applied permission change \"%s\" to group \"%s\", by \"%s\"",
+                token, group->groupname, current_client->username);
+        printf("%s\n", change_msg);
+        send_group(group, change_msg, strlen(change_msg)+1);
+
+        token = strtok(NULL, " ");
+    }
+
+    return 1;
 }
 
 

@@ -404,7 +404,7 @@ static inline int parse_client_command()
     else if(strncmp(msg_body, "!userlist", 9) == 0)
         return userlist();
 
-    else if(strncmp(msg_body, "!newgroup", 9) == 0)
+    else if(strncmp(msg_body, "!newgroup ", 10) == 0)
         return create_new_group();
 
     else if(strncmp(msg_body, "!joingroup ", 11) == 0)
@@ -413,17 +413,23 @@ static inline int parse_client_command()
     else if(strncmp(msg_body, "!leavegroup ", 12) == 0)
         return leave_group();
 
-    else if(strncmp(msg_body, "!invitegroup,", 13) == 0)
+    else if(strncmp(msg_body, "!invitegroup ", 13) == 0)
         return invite_to_group();
 
-    else if(strncmp(msg_body, "!kickgroup,", 10) == 0)
+    else if(strncmp(msg_body, "!kickgroup ", 11) == 0)
         return kick_from_group();
 
-    else if(strncmp(msg_body, "!bangroup,", 9) == 0)
+    else if(strncmp(msg_body, "!bangroup ", 10) == 0)
         return ban_from_group();
 
-    else if(strncmp(msg_body, "!unbangroup,", 11) == 0)
+    else if(strncmp(msg_body, "!unbangroup ", 12) == 0)
         return unban_from_group();
+
+    else if(strncmp(msg_body, "!setuserperm ", 9) == 0)
+        return set_member_permission();
+    
+    else if(strncmp(msg_body, "!setperm ", 9) == 0)
+        return set_group_permission();
 
 
     /*File Transfer Commands*/
@@ -763,7 +769,7 @@ static int handle_stdin()
 
         printf("stdin: %s\n", str);
 
-handle_client_input_cleanup:
+    handle_client_input_cleanup:
 
         if(str)
         {
@@ -859,7 +865,7 @@ void server(const char* hostname, const unsigned int port)
     /*Spawn a new thread that monitors network events*/
     if(pthread_create(&network_event_thread, NULL, (void*) &server_main_loop, NULL) != 0)
     {
-        printf("Failed to create timer event thread\n");
+        printf("Failed to create main network thread\n");
         return;
     }
 
@@ -870,4 +876,3 @@ void server(const char* hostname, const unsigned int port)
 
 #undef MAX_CONNECTION_BACKLOG
 #undef MAX_EPOLL_EVENTS
-#undef CLIENT_EPOLL_DEFAULT_EVENTS

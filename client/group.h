@@ -18,6 +18,7 @@ extern Namelist* groups_joined;
 void group_invited();
 void group_joined();
 void group_kicked();
+void group_banned();
 void user_left_group();
 void user_joined_group();
 int parse_filelist();

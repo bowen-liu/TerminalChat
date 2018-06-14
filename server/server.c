@@ -24,7 +24,8 @@ pthread_t timer_event_thread;
 //Keeping track of clients
 Client *active_connections = NULL;                  //Hashtable of all active client sockets (key = socketfd)
 User *active_users = NULL;                          //Hashtable of all active users (key = username), mapped to their client descriptors
-unsigned int total_users = 0;    
+unsigned int total_users = 0;
+//IP_List *banned_ips;                                //All IPs that are banned from connecting to the server    
 
 //Client/Event being served right now
 Client *current_client;                             //Descriptor for the client being serviced right now
@@ -415,6 +416,12 @@ static inline int parse_client_command()
 
     else if(strncmp(msg_body, "!kickgroup,", 10) == 0)
         return kick_from_group();
+
+    else if(strncmp(msg_body, "!bangroup,", 9) == 0)
+        return ban_from_group();
+
+    else if(strncmp(msg_body, "!unbangroup,", 11) == 0)
+        return unban_from_group();
 
 
     /*File Transfer Commands*/

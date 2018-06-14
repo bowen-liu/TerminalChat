@@ -264,6 +264,9 @@ static void parse_control_message(char* cmd_buffer)
     else if(strncmp("!groupkicked=", buffer, 13) == 0)
         group_kicked();
 
+    else if(strncmp("!groupbanned=", buffer, 13) == 0)
+        group_banned();
+
     /*File Transfer operations. Implemented in file_transfer_client.c*/
 
     else if(strncmp("!sendfile=", buffer, 10) == 0)

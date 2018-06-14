@@ -53,6 +53,9 @@ typedef struct group {
     char groupname[USERNAME_LENG+1];
     Group_Member *members;
     int group_flags;
+
+    //Banned IPs from joining this group
+    IP_List *banned_ips;
     
     //For group file sharing
     unsigned int last_fileid;
@@ -84,6 +87,8 @@ int leave_group();
 int join_group();
 int invite_to_group();
 int kick_from_group();
+int ban_from_group();
+int unban_from_group();
 int change_group_member_permission(Group *group, User *user, int new_permissions);
 
 int group_filelist();

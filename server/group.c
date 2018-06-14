@@ -143,6 +143,8 @@ static void remove_group(Group *group)
 
     File_List *cur_file, *tmp_file;
     char group_files_directory[MAX_FILE_PATH+1];
+
+    IP_List *cur_ip, *tmp_ip;
     
     if(mcount > 0)
     {
@@ -166,6 +168,12 @@ static void remove_group(Group *group)
             ++rcount;
         }
         printf("Removed %u unresponded invites from group \"%s\"\n", rcount, group->groupname);
+    }
+
+    //Free the banned IP list
+    HASH_ITER(hh, group->banned_ips, cur_ip, tmp_ip)
+    {
+        free(cur_ip);
     }
 
     //Delete all files uploaded to this group
@@ -436,6 +444,7 @@ int join_group()
 
     Group *group;
     Group_Member *newmember = NULL;
+    IP_List *ban_record;
 
     sscanf(buffer, "!joingroup %s", groupname);
     groupname_plain = plain_name(groupname);
@@ -449,6 +458,9 @@ int join_group()
         return 0;
     }
 
+    //Check if the user's IP has been banned from the group already
+    HASH_FIND_INT(group->banned_ips, &current_client->sockaddr.sin_addr.s_addr, ban_record);
+
     //Check if a member entry already exists in this group
     HASH_FIND_STR(group->members, current_client->username, newmember);
     if(newmember)
@@ -457,6 +469,15 @@ int join_group()
         {
             printf("User \"%s\" is already a member of the group \"%s\". Permission: %d\n", current_client->username, group->groupname, newmember->permissions);
             send_msg(current_client, "AlreadyExist", 13);
+            return 0;
+        }
+
+        //If the invited user has been IP banned, delete its invitation
+        if(ban_record)
+        {
+            printf("User \"%s\" wanted to join group \"%s\", but it has been IP banned.\n", current_client->username, group->groupname);
+            send_msg(current_client, "IPBanned", 9);
+            leave_group_direct(group, current_client, "Banned");
             return 0;
         }
         
@@ -469,7 +490,15 @@ int join_group()
     else
     {
         if(!(group->group_flags & GRP_FLAG_INVITE_ONLY))
-        {
+        {   
+            if(ban_record)
+            {
+                printf("User \"%s\" wanted to join group \"%s\", but it has been IP banned.\n", current_client->username, group->groupname);
+                send_msg(current_client, "IPBanned", 9);
+                return 0;
+            }
+            
+            //Allow the user to join the group
             if(group == lobby)
                 newmember = allocate_group_member(lobby, current_client, LOBBY_USER_PERM);
             else
@@ -560,7 +589,9 @@ int invite_to_group()
         {
             printf("User \"%s\" was not found.\n", token);
             send_msg(current_client, "UserNotFound", 13);
-            return 0;
+            
+            token = strtok(NULL, " ");
+            continue;
         }
 
         //Send an invitation to the user
@@ -574,13 +605,14 @@ int invite_to_group()
 }
 
 
-int kick_from_group()
+static int kick_ban_from_group(int ban_users)
 {
     char kick_msg[BUFSIZE];
     char *newbuffer = msg_body, *token;
     Group* group;
     Group_Member* target_member;
     Namelist *group_entry;
+    IP_List *ban_entry;
 
     if(!msg_target)
         return 0;
@@ -609,8 +641,22 @@ int kick_from_group()
         {
             printf("User \"%s\" was not found.\n", token);
             send_msg(current_client, "UserNotFound", 13);
-            return 0;
+            
+            token = strtok(NULL, " ");
+            continue;
         }
+
+        //Add the user's associated IP address to the ban list, if requested
+        if(ban_users)
+        {
+            HASH_FIND_INT(group->banned_ips, &(uint32_t){current_client->sockaddr.sin_addr.s_addr}, ban_entry);
+            if(!ban_entry)
+            {
+                ban_entry = calloc(1, sizeof(IP_List));
+                ban_entry->ipaddr = current_client->sockaddr.sin_addr.s_addr;
+                HASH_ADD_INT(group->banned_ips, ipaddr, ban_entry);
+            }
+        }    
 
         //Remove the member from the group's member table
         HASH_DEL(group->members, target_member);
@@ -627,12 +673,14 @@ int kick_from_group()
         
 
         //Announce to other existing members that a new member was invited
-        sprintf(kick_msg, "User \"%s\" has been kicked by \"%s\" in group \"%s\"", target_member->username, current_client->username, group->groupname);
+        sprintf(kick_msg, "User \"%s\" has been %s by \"%s\" from group \"%s\"", 
+                target_member->username, (ban_users)? "banned":"kicked", current_client->username, group->groupname);
         printf("%s\n", kick_msg);
         send_group(group, kick_msg, strlen(kick_msg)+1);
 
         //Send an invite to the requested user to join the group
-        sprintf(kick_msg, "!groupkicked=%s,by=%s", group->groupname, current_client->username);
+        sprintf(kick_msg, "%s=%s,by=%s", 
+                (ban_users)? "!groupbanned":"!groupkicked", group->groupname, current_client->username);
         send_msg(target_member->c, kick_msg, strlen(kick_msg)+1);
         free(target_member);
 
@@ -644,6 +692,93 @@ int kick_from_group()
     {
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);
+    }
+
+    return 1;
+}
+
+int kick_from_group()
+{
+    return kick_ban_from_group(0);
+}
+
+int ban_from_group()
+{
+    return kick_ban_from_group(1);
+}
+
+int unban_from_group()
+{
+    char unban_msg[BUFSIZE];
+    char *newbuffer = msg_body, *token;
+    Group* group;
+    Group_Member* calling_member;
+    User *unban_user;
+
+    IP_List *ban_entry;
+    char ipaddr_str[INET_ADDRSTRLEN];
+
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
+
+
+    if(!basic_group_permission_check(msg_target, &group, &calling_member))
+        return 0;
+
+    //Check if the requesting user has suffice permissions to kick others
+    if(!(calling_member->permissions & GRP_PERM_CAN_KICK))
+    {
+        printf("User \"%s\" tried to kick users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Kick each member specified in the command
+    token = strtok(newbuffer, " ");                  //Skip the command header
+    token = strtok(NULL, " ");
+    while(token)
+    {
+        //Locate the member to be unbanned (from the global list of users)
+        HASH_FIND_STR(active_users, token, unban_user);
+        if(unban_user)
+        {
+            //Find the banned entry associated with the member's IP address
+            HASH_FIND_INT(group->banned_ips, &(uint32_t){unban_user->c->sockaddr.sin_addr.s_addr}, ban_entry);
+        }
+        else
+        {
+            //We also allowed banned hostname/IP addresses to be entered
+            if(!hostname_to_ip(token, "0", ipaddr_str))
+                ban_entry = NULL;
+            else
+                HASH_FIND_INT(group->banned_ips, &(uint32_t){inet_addr(ipaddr_str)}, ban_entry);
+        }
+
+        //Unban the IP address, if an entry was located
+        if(ban_entry)
+        {
+            HASH_DEL(group->banned_ips, ban_entry);
+            free(ban_entry);
+            
+            //Announce the user/IP has been unbanned
+            if(unban_user)
+                sprintf(unban_msg, "User \"%s\" has been unbanned by \"%s\" from group \"%s\"", 
+                        unban_user->username, current_client->username, group->groupname);
+            else
+                sprintf(unban_msg, "IP address \"%s\" has been unbanned by \"%s\" from group \"%s\"", 
+                        ipaddr_str, current_client->username, group->groupname);
+                
+            printf("%s\n", unban_msg);
+            send_group(group, unban_msg, strlen(unban_msg)+1);
+        }
+        else
+        {
+            printf("Target \"%s\" was not found or not banned.\n", token);
+            send_msg(current_client, "UserNotFound", 13);
+        }
+
+        token = strtok(NULL, " ");
     }
 
     return 1;

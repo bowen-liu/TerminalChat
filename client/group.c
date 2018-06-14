@@ -33,14 +33,22 @@ void group_joined()
     LL_APPEND(groups_joined, groupname);
 }
 
-void group_kicked()
+static void group_kicked_banned(int banned)
 {
     char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1];
     Namelist *current_group_name, *tmp;
 
-    sscanf(buffer, "!groupkicked=%[^,],by=%s", group_name, kicked_by);
-    printf("You have been kicked out of the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
-
+    if(banned)
+    {
+        sscanf(buffer, "!groupbanned=%[^,],by=%s", group_name, kicked_by);
+        printf("You have been banned from the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
+    }
+    else
+    {
+        sscanf(buffer, "!groupkicked=%[^,],by=%s", group_name, kicked_by);
+        printf("You have been kicked from the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
+    }
+    
     //Find the entry in the client's group_joined list and remove the entry
     LL_FOREACH_SAFE(groups_joined, current_group_name, tmp)
     {
@@ -57,6 +65,16 @@ void group_kicked()
     }
     else
         printf("You do not appear to be a member of the group \"%s\".\n", group_name);
+}
+
+void group_kicked()
+{
+    return group_kicked_banned(0);
+}
+
+void group_banned()
+{
+    return group_kicked_banned(1);
 }
 
 

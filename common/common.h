@@ -55,6 +55,12 @@ typedef struct namelist {
 } Namelist;
 
 
+typedef struct {
+    uint32_t ipaddr;            //copy from sockaddr_in->sin_addr->s_addr
+    UT_hash_handle hh;
+} IP_List;
+
+
 extern unsigned int xcrc32 (const unsigned char *buf, int len, unsigned int init);          //Defined in library/crc32/crc32.c
 
 int hostname_to_ip(const char* hostname, const char* port, char* ip_return);

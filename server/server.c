@@ -1,5 +1,7 @@
 #include "server.h"
 #include <pthread.h>
+#include <readline/readline.h>      //sudo apt-get install libreadline-dev 
+#include <readline/history.h>
 
 #define MAX_CONNECTION_BACKLOG 8
 #define MAX_EPOLL_EVENTS    32 
@@ -18,7 +20,7 @@ char *msg_body;
 TimerEvent *timers = NULL; 
 int timers_epollfd;  
 pthread_mutex_t client_lock = PTHREAD_MUTEX_INITIALIZER;        //Locked when a thread is currently working on some client requests
-pthread_t timer_event_thread;
+pthread_t timer_event_thread, network_event_thread;
 
 
 //Keeping track of clients
@@ -588,24 +590,6 @@ static int handle_client_msg(int use_pending_msg)
 }
 
 
-static int handle_stdin()
-{
-    size_t buffer_size = BUFSIZE;
-    int bytes; 
-
-    //Read from stdin and remove the newline character
-    bytes = getline(&buffer, &buffer_size, stdin);
-    if (buffer[bytes-1] == '\n') 
-    {
-        buffer[bytes-1] = '\0';
-        --bytes;
-    }
-    
-    printf("stdin: %s\n", buffer);
-
-    return bytes;
-}
-
 static void handle_timer_events()
 {
     struct epoll_event events[MAX_EPOLL_EVENTS];
@@ -694,12 +678,8 @@ static inline void server_main_loop()
 
         for(i=0; i<ready_count; i++)
         {
-            //When the administrator enters a command from stdin
-            if(events[i].data.fd == 0)
-                handle_stdin();
-            
             //When a new connection arrives to the server socket, accept it
-            else if(events[i].data.fd == server_socketfd)
+            if(events[i].data.fd == server_socketfd)
                 handle_new_connection();
 
             //When an event is occuring on an existing client connection
@@ -759,6 +739,37 @@ static inline void server_main_loop()
             }    
         }
 
+        pthread_mutex_unlock(&client_lock);
+    }
+}
+
+
+static int handle_stdin()
+{
+    char *str = NULL;
+    char *prompt = NULL;
+    
+    while(1)
+    {
+        str = readline(prompt);
+        pthread_mutex_lock(&client_lock);
+       
+        //Do not transmit empty messages
+        if(!str)
+            goto handle_client_input_cleanup;
+
+        if(strlen(str) < 1 || str[0] == '\n')
+             goto handle_client_input_cleanup;
+
+        printf("stdin: %s\n", str);
+
+handle_client_input_cleanup:
+
+        if(str)
+        {
+            free(str);
+            str = NULL;
+        }
         pthread_mutex_unlock(&client_lock);
     }
 }
@@ -825,10 +836,6 @@ void server(const char* hostname, const unsigned int port)
     fcntl(server_socketfd, F_SETFL, O_NONBLOCK);
     if(!register_fd_with_epoll(connections_epollfd, server_socketfd, EPOLLIN))
         return;   
-    
-    /*Register stdin (fd = 0) to the epoll list*/
-    if(!register_fd_with_epoll(connections_epollfd, 0, EPOLLIN))
-        return;   
 
     /*Initialize other server components before listening for connections*/
     create_lobby_group();
@@ -849,8 +856,14 @@ void server(const char* hostname, const unsigned int port)
         return;
     }
 
-    /*Begin handling requests*/
-    server_main_loop();
+    /*Spawn a new thread that monitors network events*/
+    if(pthread_create(&network_event_thread, NULL, (void*) &server_main_loop, NULL) != 0)
+    {
+        printf("Failed to create timer event thread\n");
+        return;
+    }
+
+    handle_stdin();
 }
 
 

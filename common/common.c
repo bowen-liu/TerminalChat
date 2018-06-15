@@ -92,6 +92,15 @@ int name_is_valid(char* name)
         return 0;
     }
 
+    //Check for banned keywords as names
+    if(strcmp(name, "admin") == 0)
+        return 0;
+    else if(strcmp(name, "user") == 0)
+        return 0;
+    else if(strcmp(name, "default") == 0)
+        return 0;
+    else if(strcmp(name, "all") == 0)
+        return 0;
 
     //Scan for invalid characters in the name. Alternatively, consider strpbrk()
     for(i=0; i<name_leng; i++)

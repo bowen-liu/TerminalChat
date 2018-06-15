@@ -125,6 +125,8 @@ void disconnect_client(Client *c)
 static void exit_cleanup()
 {
     close(server_socketfd);
+    pthread_cancel(timer_event_thread);
+    pthread_cancel(network_event_thread);
 }
 
 
@@ -407,28 +409,28 @@ static inline int parse_client_command()
     else if(strncmp(msg_body, "!newgroup ", 10) == 0)
         return create_new_group();
 
-    else if(strncmp(msg_body, "!joingroup ", 11) == 0)
+    else if(strncmp(msg_body, "!join ", 6) == 0)
         return join_group();
 
-    else if(strncmp(msg_body, "!leavegroup ", 12) == 0)
+    else if(strncmp(msg_body, "!leave ", 7) == 0)
         return leave_group();
 
-    else if(strncmp(msg_body, "!invitegroup ", 13) == 0)
+    else if(strncmp(msg_body, "!invite ", 8) == 0)
         return invite_to_group();
 
-    else if(strncmp(msg_body, "!kickgroup ", 11) == 0)
+    else if(strncmp(msg_body, "!kick ", 6) == 0)
         return kick_from_group();
 
-    else if(strncmp(msg_body, "!bangroup ", 10) == 0)
+    else if(strncmp(msg_body, "!ban ", 5) == 0)
         return ban_from_group();
 
-    else if(strncmp(msg_body, "!unbangroup ", 12) == 0)
+    else if(strncmp(msg_body, "!unban ", 7) == 0)
         return unban_from_group();
 
-    else if(strncmp(msg_body, "!setuserperm ", 9) == 0)
+    else if(strncmp(msg_body, "!setperm ", 9) == 0)
         return set_member_permission();
     
-    else if(strncmp(msg_body, "!setperm ", 9) == 0)
+    else if(strncmp(msg_body, "!setflag ", 9) == 0)
         return set_group_permission();
 
 
@@ -767,7 +769,11 @@ static int handle_stdin()
         if(strlen(str) < 1 || str[0] == '\n')
              goto handle_client_input_cleanup;
 
-        printf("stdin: %s\n", str);
+        //Admin only commands
+        if(strcmp(str, "!exit") == 0)
+            exit(0);
+        else
+            printf("stdin: %s\n", str);
 
     handle_client_input_cleanup:
 

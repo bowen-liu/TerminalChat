@@ -11,16 +11,19 @@
 #define GRP_PERM_CAN_SETPERM    0x40
 
 #define GRP_PERM_DEFAULT        (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE)
-#define GRP_PERM_ADMIN          (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
-#define LOBBY_USER_PERM         (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK)
-
+#define GRP_PERM_DEFAULT_ADMIN  (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
+#define GRP_PERM_ADMIN_CHECK    (GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
 
 /*Permission flags for individual groups*/
-#define GRP_FLAG_INVITE_ONLY    0x1
-#define GRP_FLAG_ALLOW_XFER     0x2
+#define GRP_FLAG_PERSISTENT     0x1
+#define GRP_FLAG_INVITE_ONLY    0x2
+#define GRP_FLAG_ALLOW_XFER     0x4
 
 #define GRP_FLAG_DEFAULT        (GRP_FLAG_ALLOW_XFER)
-#define LOBBY_FLAGS             0
+
+/*Lobby Settings*/
+#define LOBBY_FLAGS             (GRP_FLAG_PERSISTENT)
+#define LOBBY_USER_PERM         (GRP_PERM_CAN_TALK)
 
 
 
@@ -53,6 +56,7 @@ typedef struct group {
     char groupname[USERNAME_LENG+1];
     Group_Member *members;
     int group_flags;
+    int default_user_permissions;
 
     //Banned IPs from joining this group
     IP_List *banned_ips;

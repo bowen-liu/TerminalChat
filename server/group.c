@@ -18,8 +18,8 @@ void create_lobby_group()
     lobby = calloc(1, sizeof(Group));
     bcast_buffer = malloc(BUFSIZE);
 
-
     strcpy(lobby->groupname, LOBBY_GROUP_NAME);
+    lobby->default_user_permissions = LOBBY_USER_PERM;
     lobby->group_flags = LOBBY_FLAGS;
 
     HASH_ADD_STR(groups, groupname, lobby);
@@ -274,7 +274,7 @@ int userlist_group(char *group_name)
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
 
-        if((curr->permissions & GRP_PERM_ADMIN) == GRP_PERM_ADMIN)
+        if((curr->permissions & GRP_PERM_DEFAULT_ADMIN) == GRP_PERM_DEFAULT_ADMIN)
             strcat(userlist_msg, " (admin)");
         
         if(!(curr->permissions & GRP_PERM_HAS_JOINED))
@@ -324,6 +324,7 @@ int create_new_group()
     //Register the group
     newgroup = calloc(1, sizeof(Group));
     strcpy(newgroup->groupname, token);
+    newgroup->default_user_permissions = GRP_PERM_DEFAULT;
     newgroup->group_flags = GRP_FLAG_DEFAULT;
     HASH_ADD_STR(groups, groupname, newgroup);
 
@@ -340,7 +341,7 @@ int create_new_group()
         }
 
         //Record an invite for each initial member, and mark them as admins
-        allocate_group_member(newgroup, target_user->c, GRP_PERM_ADMIN);
+        allocate_group_member(newgroup, target_user->c, GRP_PERM_DEFAULT_ADMIN);
         if(invite_to_group_direct(newgroup, target_user))
             ++invites_sent;
 
@@ -391,7 +392,7 @@ int leave_group_direct(Group *group, Client *c, char *reason)
         printf("User \"%s\"'s unresponded invite has been removed from the group \"%s\".\n", c->username, group->groupname);
 
     //Delete this group if no members are remaining
-    if(HASH_COUNT(group->members) == 0 && strcmp(group->groupname, LOBBY_GROUP_NAME) != 0)
+    if(HASH_COUNT(group->members) == 0 && !(group->group_flags & GRP_FLAG_PERSISTENT))
     {
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);
@@ -408,7 +409,7 @@ int leave_group()
     Namelist *groupname_entry;
     Group *group;
 
-    sscanf(buffer, "!leavegroup %s", groupname);
+    sscanf(buffer, "!leave %s", groupname);
     groupname_plain = plain_name(groupname);
 
     //Locate this group in the hash table
@@ -446,7 +447,7 @@ int join_group()
     Group_Member *newmember = NULL;
     IP_List *ban_record;
 
-    sscanf(buffer, "!joingroup %s", groupname);
+    sscanf(buffer, "!join %s", groupname);
     groupname_plain = plain_name(groupname);
 
     //Locate this group in the hash table
@@ -499,10 +500,7 @@ int join_group()
             }
             
             //Allow the user to join the group
-            if(group == lobby)
-                newmember = allocate_group_member(lobby, current_client, LOBBY_USER_PERM);
-            else
-                newmember = allocate_group_member(group, current_client, (GRP_PERM_HAS_JOINED | GRP_PERM_DEFAULT));
+            newmember = allocate_group_member(group, current_client, group->default_user_permissions | GRP_PERM_HAS_JOINED);
         }
         else
         {
@@ -512,7 +510,7 @@ int join_group()
         }
     }
 
-    printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
+    printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_DEFAULT_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
 
     //Inform the new member that the join was sucessful
     sprintf(buffer, "!groupjoined=%s", group->groupname);
@@ -579,7 +577,7 @@ int invite_to_group()
 
 
     //Invite each member specified in the command
-    token = strtok(newbuffer, " ");                  //Skip the command header "!invitegroup"
+    token = strtok(newbuffer, " ");                  //Skip the command header "!invite"
     token = strtok(NULL, " ");
     while(token)
     {
@@ -631,7 +629,7 @@ static int kick_ban_from_group(int ban_users)
     }
 
     //Kick each member specified in the command
-    token = strtok(newbuffer, " ");                  //Skip the command header
+    token = strtok(newbuffer, " ");                  //Skip the command header "!kick" or "!ban"
     token = strtok(NULL, " ");
     while(token)
     {
@@ -735,7 +733,7 @@ int unban_from_group()
     }
 
     //Kick each member specified in the command
-    token = strtok(newbuffer, " ");                  //Skip the command header
+    token = strtok(newbuffer, " ");                  //Skip the command header "!ban"
     token = strtok(NULL, " ");
     while(token)
     {
@@ -784,15 +782,38 @@ int unban_from_group()
     return 1;
 }
 
+enum SetPermActions {INVALID_PERM = 0, ADD_PERM, REMOVE_PERM, SET_PERM};
+
+static inline void set_member_permission_single(int *target_permission, enum SetPermActions action, int permission_mask)
+{
+    switch(action)
+    {
+        case ADD_PERM:
+            *target_permission |= permission_mask;
+            break;
+        case REMOVE_PERM:
+            *target_permission &= ~permission_mask;
+            break;
+        case SET_PERM:
+            *target_permission = permission_mask | (*target_permission & GRP_PERM_HAS_JOINED);
+            break;
+        default:
+            break;
+    }
+}
+
 int set_member_permission()
 {
     char change_msg[BUFSIZE];
     char *newbuffer = msg_body, *token;
     Group* group;
-    Group_Member *target_member;
+    Group_Member *target_member, *tmp;
 
-    IP_List *ban_entry;
-    char ipaddr_str[INET_ADDRSTRLEN];
+    int *target_permission = NULL;
+    int all_targets = 0;
+    int permission_mask;
+    enum SetPermActions action;
+
 
     if(!msg_target)
         return 0;
@@ -811,7 +832,7 @@ int set_member_permission()
     }
 
     //Kick each member specified in the command
-    token = strtok(newbuffer, " ");                     //Skip the command header "!setuserperm"
+    token = strtok(newbuffer, " ");                     //Skip the command header "!setperm"
 
     //Read the target name
     token = strtok(NULL, " "); 
@@ -822,57 +843,138 @@ int set_member_permission()
         return 0;
     }
 
-    HASH_FIND_STR(group->members, token, target_member);
-    if(target_member)
+
+    //Change the permission for all users (excluding admins)
+    if(strcmp(token, "all") == 0)
     {
-        printf("User \"%s\" was not found.\n", token);
-        send_msg(current_client, "UserNotFound", 13);
-        return 0;
+        target_permission = NULL;
+        all_targets = 1;
+    }    
+        
+    //Change the default template permission for all further new members
+    else if(strcmp(token, "default") == 0)
+        target_permission = &group->default_user_permissions;
+
+    //Change the permission for a specific user
+    else
+    {
+        HASH_FIND_STR(group->members, token, target_member);
+        if(!target_member)
+        {
+            printf("User \"%s\" was not found.\n", token);
+            send_msg(current_client, "UserNotFound", 13);
+            return 0;
+        }
+
+        target_permission = &target_member->permissions;
     }
 
-
-    //Apply all permission changes 
+    //Match the current token in the command with an permission change operation
     token = strtok(NULL, " "); 
     while(token)
     {
         if(strcmp(token, "CAN_TALK") == 0)
-            target_member->permissions |= GRP_PERM_CAN_TALK;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_TALK;
+        }
         else if(strcmp(token, "CANNOT_TALK") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_TALK;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_TALK;
+        }
         else if(strcmp(token, "CAN_INVITE") == 0)
-            target_member->permissions |= GRP_PERM_CAN_INVITE;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_INVITE;
+        }
         else if(strcmp(token, "CANNOT_INVITE") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_INVITE;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_INVITE;
+        }
         else if(strcmp(token, "CAN_PUTFILE") == 0)
-            target_member->permissions |= GRP_PERM_CAN_PUTFILE;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_PUTFILE;
+        }
         else if(strcmp(token, "CANNOT_PUTFILE") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_PUTFILE;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_PUTFILE;
+        }
         else if(strcmp(token, "CAN_GETFILE") == 0)
-            target_member->permissions |= GRP_PERM_CAN_GETFILE;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_GETFILE;
+        }
         else if(strcmp(token, "CANNOT_GETFILE") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_GETFILE;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_GETFILE;
+        }
         else if(strcmp(token, "CAN_KICK") == 0)
-            target_member->permissions |= GRP_PERM_CAN_KICK;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_KICK;
+        }
         else if(strcmp(token, "CANNOT_KICK") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_KICK;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_KICK;
+        }
         else if(strcmp(token, "CAN_SETPERM") == 0)
-            target_member->permissions |= GRP_PERM_CAN_SETPERM;
+        {
+            action = ADD_PERM;
+            permission_mask = GRP_PERM_CAN_SETPERM;
+        }
         else if(strcmp(token, "CANNOT_SETPERM") == 0)
-            target_member->permissions &= ~GRP_PERM_CAN_SETPERM;
+        {
+            action = REMOVE_PERM;
+            permission_mask = GRP_PERM_CAN_SETPERM;
+        }
         
         else if(strcmp(token, "SET_ADMIN") == 0)
-            target_member->permissions = GRP_PERM_ADMIN | (target_member->permissions & GRP_PERM_HAS_JOINED);
+        {
+            action = SET_PERM;
+            permission_mask = GRP_PERM_DEFAULT_ADMIN;
+        }
         else if(strcmp(token, "SET_USER") == 0)
-            target_member->permissions = GRP_PERM_DEFAULT | (target_member->permissions & GRP_PERM_HAS_JOINED);
+        {
+            action = SET_PERM;
+            permission_mask = GRP_PERM_DEFAULT;
+        }
         
         else
         {
             printf("Unknown operation \"%s\"\n", token);
             send_msg(current_client, "UnknownOP", 10);
+            token = strtok(NULL, " ");
+            continue;
+        }
+
+        //Apply the requested permission change
+        if(all_targets)
+        {
+            HASH_ITER(hh, group->members, target_member, tmp)
+            {
+                //Do not apply to admins
+                if(target_member->permissions & GRP_PERM_ADMIN_CHECK)
+                    continue;
+                
+                target_permission = &target_member->permissions;
+                set_member_permission_single(target_permission, action, permission_mask);
+            }
+            sprintf(change_msg, "Applied permission change \"%s\" to ALL USERS in group \"%s\", by \"%s\"",
+                token, group->groupname, current_client->username);
+        }
+        else
+        {
+            set_member_permission_single(target_permission, action, permission_mask);
+            sprintf(change_msg, "Applied permission change \"%s\" to user \"%s\" in group \"%s\", by \"%s\"",
+                token, target_member->username, group->groupname, current_client->username);
         }
         
-        sprintf(change_msg, "Applied permission change \"%s\" to user \"%s\" in group \"%s\", by \"%s\"",
-                token, target_member->username, group->groupname, current_client->username);
         printf("%s\n", change_msg);
         send_group(group, change_msg, strlen(change_msg)+1);
 
@@ -906,7 +1008,7 @@ int set_group_permission()
     }
 
     //Apply all permission changes 
-    token = strtok(newbuffer, " ");                     //Skip the command header "!setperm"
+    token = strtok(newbuffer, " ");                     //Skip the command header "!setflag"
     token = strtok(NULL, " "); 
     while(token)
     {

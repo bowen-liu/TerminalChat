@@ -98,6 +98,8 @@ int set_group_permission();
 
 int group_filelist();
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file);
-int remove_file_from_group(Group *group, char *filename);
+int remove_file_from_group();
+
+void admin_delete_group(char *buffer);
 
 #endif

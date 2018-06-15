@@ -64,7 +64,7 @@ unsigned int send_lobby(Client *c, char* buffer, size_t size)
 
 int group_msg()
 {
-    char gmsg[MAX_MSG_LENG];
+    char *gmsg;
     Group *target;
     Group_Member *sending_member;
 
@@ -99,8 +99,12 @@ int group_msg()
     }
 
     //Forward message to the target
+    gmsg = malloc(MAX_MSG_LENG+1);
     sprintf(gmsg, "%s (%s): %s", current_client->username, target->groupname, msg_body);
-    return send_group(target, gmsg, strlen(gmsg)+1);
+    send_group(target, gmsg, strlen(gmsg)+1);
+    free(gmsg);
+
+    return 1;
 }
 
 
@@ -136,7 +140,8 @@ Group_Member* allocate_group_member(Group *group, Client *target_user, int permi
 
 static void remove_group(Group *group)
 {
-    unsigned int mcount = HASH_COUNT(group->members), rcount = 0;
+    unsigned int mcount = HASH_COUNT(group->members), removed_members = 0, removed_invites = 0;
+    char *leave_msg;
 
     Group_Member *cur_member = NULL, *tmp_member;
     Namelist *groupname_entry;
@@ -145,16 +150,35 @@ static void remove_group(Group *group)
     char group_files_directory[MAX_FILE_PATH+1];
 
     IP_List *cur_ip, *tmp_ip;
+
+    if(group->group_flags & GRP_FLAG_PERSISTENT)
+    {
+        printf("Group \"%s\" has a persistent flag. Skip deleting.\n", group->groupname);
+        return;
+    }
     
     if(mcount > 0)
-    {
-        printf("Group \"%s\" is nonempty. Possibly contains unused invites. (hash_count: %d) \n", group->groupname, mcount);
+    {   
+        leave_msg = malloc(MAX_MSG_LENG+1);
         
         //Remove any remaining member objects
         HASH_ITER(hh, group->members, cur_member, tmp_member) 
-        {
-            printf("Removing unused invite for user \"%s\".\n", cur_member->username);
+        { 
+            //Notify all joined member that the group is closing
+            if(cur_member->permissions & GRP_PERM_HAS_JOINED)
+            {
+                printf("Removing user \"%s\" from deleted group \"%s\".\n", cur_member->username, group->groupname);
+                sprintf(leave_msg, "!groupkicked=%s,by=%s,reason=%s", group->groupname, "admin", "closed");
+                send_msg(cur_member->c, leave_msg, strlen(leave_msg)+1);
+                ++removed_members;
+            }     
+            else
+            {
+                printf("Removing unused invite for user \"%s\" from deleted group \"%s\".\n", cur_member->username, group->groupname);
+                ++removed_invites;
+            }       
 
+            //Remove the group's entry from the member's joined list
             groupname_entry = find_from_namelist(cur_member->c->groups_joined, group->groupname);
             if(groupname_entry)
             {
@@ -165,9 +189,10 @@ static void remove_group(Group *group)
                 printf("Group entry was not found in client's descriptor\n");
 
             free(cur_member);
-            ++rcount;
         }
-        printf("Removed %u unresponded invites from group \"%s\"\n", rcount, group->groupname);
+
+        printf("Removed %u users and %u invites from group \"%s\"\n", removed_members, removed_invites, group->groupname);
+        free(leave_msg);
     }
 
     //Free the banned IP list
@@ -360,7 +385,7 @@ int create_new_group()
 
 int leave_group_direct(Group *group, Client *c, char *reason)
 {
-    char leavemsg[BUFSIZE];
+    char *leavemsg;
     Group_Member* target_member;
     int has_joined;
     
@@ -374,6 +399,8 @@ int leave_group_direct(Group *group, Client *c, char *reason)
     has_joined = target_member->permissions & GRP_PERM_HAS_JOINED;
     HASH_DEL(group->members, target_member);
     free(target_member);
+
+    leavemsg = malloc(MAX_MSG_LENG+1);
 
     if(has_joined)
     {
@@ -397,7 +424,8 @@ int leave_group_direct(Group *group, Client *c, char *reason)
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);
     }
-        
+
+    free(leavemsg);    
     return 1;
 }
 
@@ -440,6 +468,7 @@ int leave_group()
 
 int join_group()
 {
+    char *join_msg;
     char groupname[USERNAME_LENG+3];
     char *groupname_plain;
 
@@ -513,20 +542,22 @@ int join_group()
     printf("Added member \"%s\" to group \"%s\" %s\n", current_client->username, group->groupname, (newmember->permissions == (GRP_PERM_DEFAULT_ADMIN | GRP_PERM_HAS_JOINED))? "as an admin":"");
 
     //Inform the new member that the join was sucessful
-    sprintf(buffer, "!groupjoined=%s", group->groupname);
-    send_msg(current_client, buffer, strlen(buffer)+1);
+    join_msg = malloc(MAX_MSG_LENG+1);
+    sprintf(join_msg, "!groupjoined=%s", group->groupname);
+    send_msg(current_client, join_msg, strlen(join_msg)+1);
 
     //Announce to other existing members that a new member has joined the group
-    sprintf(buffer, "!joinedgroup=%s,user=%s", group->groupname, current_client->username);
-    send_group(group, buffer, strlen(buffer)+1);
+    sprintf(join_msg, "!joinedgroup=%s,user=%s", group->groupname, current_client->username);
+    send_group(group, join_msg, strlen(join_msg)+1);
 
+    free(join_msg);
     return 1;
 }
 
 
 static int invite_to_group_direct(Group *group, User *user)
 {
-    char invite_msg[BUFSIZE];
+    char *invite_msg;
     Group_Member *already_in_group;
     
     //Check if this user is already in the group
@@ -539,6 +570,7 @@ static int invite_to_group_direct(Group *group, User *user)
     }
 
     //Announce to other existing members that a new member was invited
+    invite_msg = malloc(MAX_MSG_LENG+1);
     sprintf(invite_msg, "User \"%s\" has been invited \"%s\" to join the group \"%s\"", current_client->username, user->username, group->groupname);
     printf("%s\n", invite_msg);
     send_group(group, invite_msg, strlen(invite_msg)+1);
@@ -547,6 +579,7 @@ static int invite_to_group_direct(Group *group, User *user)
     sprintf(invite_msg, "!groupinvite=%s,sender=%s", group->groupname, current_client->username);
     send_msg(user->c, invite_msg, strlen(invite_msg)+1);
 
+    free(invite_msg);
     return 1;
 }
 
@@ -605,11 +638,13 @@ int invite_to_group()
 
 static int kick_ban_from_group(int ban_users)
 {
-    char kick_msg[BUFSIZE];
+    char *kick_msg;
     char *newbuffer = msg_body, *token;
+
     Group* group;
     Group_Member* target_member;
     Namelist *group_entry;
+
     IP_List *ban_entry;
 
     if(!msg_target)
@@ -627,6 +662,8 @@ static int kick_ban_from_group(int ban_users)
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
+
+    kick_msg = malloc(MAX_MSG_LENG+1);
 
     //Kick each member specified in the command
     token = strtok(newbuffer, " ");                  //Skip the command header "!kick" or "!ban"
@@ -670,15 +707,15 @@ static int kick_ban_from_group(int ban_users)
             printf("Group entry was not found in client's descriptor\n");
         
 
-        //Announce to other existing members that a new member was invited
+        //Announce to other members about the kick
         sprintf(kick_msg, "User \"%s\" has been %s by \"%s\" from group \"%s\"", 
                 target_member->username, (ban_users)? "banned":"kicked", current_client->username, group->groupname);
         printf("%s\n", kick_msg);
         send_group(group, kick_msg, strlen(kick_msg)+1);
 
-        //Send an invite to the requested user to join the group
-        sprintf(kick_msg, "%s=%s,by=%s", 
-                (ban_users)? "!groupbanned":"!groupkicked", group->groupname, current_client->username);
+        //Inform the user it has been kicked from the group
+        sprintf(kick_msg, "%s=%s,by=%s,reason=%s", 
+                (ban_users)? "!groupbanned":"!groupkicked", group->groupname, current_client->username, "none");
         send_msg(target_member->c, kick_msg, strlen(kick_msg)+1);
         free(target_member);
 
@@ -686,12 +723,13 @@ static int kick_ban_from_group(int ban_users)
     }
 
     //Delete this group if no members are remaining
-    if(HASH_COUNT(group->members) == 0)
+    if(HASH_COUNT(group->members) == 0 && !(group->group_flags & GRP_FLAG_PERSISTENT))
     {
         printf("Group \"%s\" is now empty. Deleting...\n", group->groupname);
         remove_group(group);
     }
 
+    free(kick_msg);
     return 1;
 }
 
@@ -707,7 +745,7 @@ int ban_from_group()
 
 int unban_from_group()
 {
-    char unban_msg[BUFSIZE];
+    char *unban_msg;
     char *newbuffer = msg_body, *token;
     Group* group;
     Group_Member* calling_member;
@@ -731,6 +769,8 @@ int unban_from_group()
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
+
+    unban_msg = malloc(MAX_MSG_LENG+1);
 
     //Kick each member specified in the command
     token = strtok(newbuffer, " ");                  //Skip the command header "!ban"
@@ -779,6 +819,7 @@ int unban_from_group()
         token = strtok(NULL, " ");
     }
 
+    free(unban_msg);
     return 1;
 }
 
@@ -804,7 +845,7 @@ static inline void set_member_permission_single(int *target_permission, enum Set
 
 int set_member_permission()
 {
-    char change_msg[BUFSIZE];
+    char *change_msg;
     char *newbuffer = msg_body, *token;
     Group* group;
     Group_Member *target_member, *tmp;
@@ -953,6 +994,8 @@ int set_member_permission()
             continue;
         }
 
+        change_msg = malloc(MAX_MSG_LENG+1);
+
         //Apply the requested permission change
         if(all_targets)
         {
@@ -981,12 +1024,13 @@ int set_member_permission()
         token = strtok(NULL, " ");
     }
 
+    free(change_msg);
     return 1;
 }
 
 int set_group_permission()
 {
-    char change_msg[BUFSIZE];
+    char *change_msg;
     char *newbuffer = msg_body, *token;
     Group* group;
     Group_Member *target_member;
@@ -994,7 +1038,6 @@ int set_group_permission()
     if(!msg_target)
         return 0;
     msg_target += 2;
-
 
     if(!basic_group_permission_check(msg_target, &group, &target_member))
         return 0;
@@ -1027,10 +1070,12 @@ int set_group_permission()
             send_msg(current_client, "UnknownOP", 10);
         }
         
+        change_msg = malloc(MAX_MSG_LENG+1);
         sprintf(change_msg, "Applied permission change \"%s\" to group \"%s\", by \"%s\"",
                 token, group->groupname, current_client->username);
         printf("%s\n", change_msg);
         send_group(group, change_msg, strlen(change_msg)+1);
+        free(change_msg);
 
         token = strtok(NULL, " ");
     }
@@ -1094,7 +1139,7 @@ int group_filelist()
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file)
 {
     File_List *new_file = calloc(1, sizeof(File_List));
-    char new_file_msg[MAX_MSG_LENG];
+    char *new_file_msg;
 
     strcpy(new_file->uploader, uploader);
     strcpy(new_file->filename, filename);
@@ -1107,16 +1152,85 @@ int add_file_to_group(Group *group, char *uploader, char *filename, size_t files
 
     //TODO: Expiry timer for files uploaded to groups
 
+    new_file_msg = malloc(MAX_MSG_LENG+1);
     sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\".", 
                 new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);
-
     send_group(group, new_file_msg, strlen(new_file_msg)+1);
+    free(new_file_msg);
+
     return new_file->fileid;
 }
 
-int remove_file_from_group(Group *group, char *filename)
+int remove_file_from_group()
 {
+    Group *group;
+    Group_Member *target_member;
+    char *del_msg;
+
+    unsigned int fileid = 0; 
     File_List *requested_file;
 
+    if(!msg_target)
+        return 0;
+    msg_target += 2;
+
+    if(!basic_group_permission_check(msg_target, &group, &target_member))
+        return 0;
+
+    sscanf(msg_body, "!removefile %u", &fileid);
+
+    //Locate the file from the target group's file list with the requested fileid 
+    HASH_FIND_INT(group->filelist, &fileid, requested_file);
+    if(!requested_file)
+    {
+        printf("Could not find a file associated with fileid %u in group \"%s\"\n", fileid, group->groupname);
+        send_msg(current_client, "WrongInfo", 10);
+        return 0;
+    }
+
+    //Only admins, or original file uploader can delete the file
+    if(strcmp(target_member->username, requested_file->uploader) != 0 && 
+        !(target_member->permissions & GRP_PERM_ADMIN_CHECK))
+    {
+        printf("User \"%s\" wants to delete file %u in group \"%s\", but isn't admin and doesn't own the file.\n", target_member->username, fileid, group->groupname);
+        send_msg(current_client, "NoPermission", 13);
+        return 0;
+    }
+
+    //Announce the deletion to the group
+    del_msg = malloc(MAX_MSG_LENG+1);
+    sprintf(del_msg, "File \"%s\" (fileid: %d, uploader: \"%s\") has been deleted by \"%s\".", 
+                requested_file->filename, requested_file->fileid,  requested_file->uploader, target_member->username);
+    send_group(group, del_msg, strlen(del_msg)+1);
+    free(del_msg);
+
+    //Delete the physical file and remove it from the file list
+    remove(requested_file->target_file);
+    HASH_DEL(group->filelist, requested_file);
+    free(requested_file);
+
     return 1;
+}
+
+
+/******************************/
+/*   Server Admin Operations  */
+/******************************/
+
+void admin_delete_group(char *buffer)
+{
+    char groupname[USERNAME_LENG+1], *groupname_plain;
+    Group *group;
+
+    sscanf(buffer, "!delgroup %s", groupname);
+    groupname_plain = plain_name(groupname);
+
+    HASH_FIND_STR(groups, groupname_plain, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", groupname_plain);
+        return;
+    }
+
+    remove_group(group);
 }

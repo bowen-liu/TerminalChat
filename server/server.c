@@ -27,7 +27,7 @@ pthread_t timer_event_thread, network_event_thread;
 Client *active_connections = NULL;                  //Hashtable of all active client sockets (key = socketfd)
 User *active_users = NULL;                          //Hashtable of all active users (key = username), mapped to their client descriptors
 unsigned int total_users = 0;
-//IP_List *banned_ips;                                //All IPs that are banned from connecting to the server    
+IP_List *banned_ips;                                //All IPs that are banned from connecting to the server    
 
 //Client/Event being served right now
 Client *current_client;                             //Descriptor for the client being serviced right now
@@ -456,6 +456,9 @@ static inline int parse_client_command()
 
     else if(strncmp(msg_body, "!getfile ", 9) == 0)
         return get_new_file_from_group();
+
+    else if(strncmp(msg_body, "!removefile ", 12) == 0)
+        return remove_file_from_group();
     
     
     else
@@ -469,6 +472,105 @@ static inline int parse_client_command()
 }
 
 
+/******************************/
+/*   Server Admin Operations  */
+/******************************/
+
+static void admin_unban_user(char *buffer)
+{
+
+}
+
+static void admin_ban_user(char *buffer)
+{
+    char target_name[USERNAME_LENG+1], *target_name_plain;
+    User *target_user;
+
+    //char ipaddr_str[INET_ADDRSTRLEN];
+    IP_List *ban_entry;
+
+    sscanf(buffer, "!banuser %s", target_name);
+    target_name_plain = plain_name(target_name);
+    
+    //Locate the member to be kicked
+    HASH_FIND_STR(active_users, target_name_plain, target_user);
+    if(!target_user)
+    {
+        //if(!hostname_to_ip(target_name, "0", ipaddr_str))
+            printf("User \"%s\" was not found.\n", target_name);
+            return;
+    }
+
+    //Add the user's associated IP address to the global ban list
+    HASH_FIND_INT(banned_ips, &(uint32_t){target_user->c->sockaddr.sin_addr.s_addr}, ban_entry);
+    if(!ban_entry)
+    {
+        ban_entry = calloc(1, sizeof(IP_List));
+        ban_entry->ipaddr = current_client->sockaddr.sin_addr.s_addr;
+        HASH_ADD_INT(banned_ips, ipaddr, ban_entry);
+    }
+
+    printf("User \"%s\" has been IP banned (%s).\n", target_user->username, inet_ntoa(target_user->c->sockaddr.sin_addr));
+
+    //Drop connections
+    /*if(target_member)
+    {
+        disconnect_client(target_member->c);
+    }
+    else
+    {
+        HASH_ITER
+    }*/
+
+}
+
+static void admin_drop_user(char *buffer)
+{
+    char target_name[USERNAME_LENG+1], *target_name_plain;
+    User *target_user;
+
+    sscanf(buffer, "!dropuser %s", target_name);
+    target_name_plain = plain_name(target_name);
+
+    HASH_FIND_STR(active_users, target_name_plain, target_user);
+    if(!target_user)
+    {
+        printf("User \"%s\" was not found.\n", target_name_plain);
+        return;
+    }
+
+    disconnect_client(target_user->c);
+}
+
+static void handle_admin_commands(char *buffer)
+{
+    char *new_msg;
+    
+    if(strcmp(buffer, "!close") == 0)
+        exit(0);
+
+    else if(strncmp(buffer, "!delgroup ", 10) == 0)
+        admin_delete_group(buffer);
+
+    else if(strncmp(buffer, "!dropuser ", 10) == 0)
+        admin_drop_user(buffer);
+
+    else if(strncmp(buffer, "!banuser ", 9) == 0)
+        admin_ban_user(buffer);
+    
+    else if(strncmp(buffer, "!unbanuser ", 11) == 0)
+        admin_unban_user(buffer);
+
+    else
+    {
+        new_msg = malloc(BUFSIZE);
+        sprintf(new_msg, "***admin*** (%s): %s", lobby->groupname, buffer);
+        printf("%s\n", new_msg);
+        send_group(lobby, new_msg, strlen(new_msg)+1);
+        free(new_msg);
+    }
+
+}
 
 /******************************/
 /*    Core Server Operations  */
@@ -477,8 +579,9 @@ static inline int parse_client_command()
 static int handle_new_connection()
 {    
     Client *new_client = calloc(1, sizeof(Client));
+    IP_List *ban_entry;
+
     current_client = new_client;
-    
     new_client->connection_type = UNREGISTERED_CONNECTION;
     new_client->sockaddr_leng = sizeof(struct sockaddr_in);
     new_client->socketfd = accept(server_socketfd, (struct sockaddr*) &new_client->sockaddr, &new_client->sockaddr_leng);
@@ -489,7 +592,20 @@ static int handle_new_connection()
         free(new_client);
         return 0;
     }
-    printf("Accepted new connection %s:%d (fd=%d)\n", inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port), new_client->socketfd);
+    printf("Accepted new connection %s:%d (fd=%d)\n", 
+            inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port), new_client->socketfd);
+
+    //Check if this user is currently in the server's global banned list
+    HASH_FIND_INT(banned_ips, &(uint32_t){new_client->sockaddr.sin_addr.s_addr}, ban_entry);
+    if(ban_entry)
+    {
+        printf("Dropping new connection on %s:%d. IP address has been banned.\n", 
+                inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
+        
+        close(new_client->socketfd);
+        free(new_client);
+        return 0;
+    }
 
     //Add the client into active_connections, and use its socketfd as the key.
     HASH_ADD_INT(active_connections, socketfd, new_client);
@@ -770,10 +886,7 @@ static int handle_stdin()
              goto handle_client_input_cleanup;
 
         //Admin only commands
-        if(strcmp(str, "!exit") == 0)
-            exit(0);
-        else
-            printf("stdin: %s\n", str);
+        handle_admin_commands(str);
 
     handle_client_input_cleanup:
 

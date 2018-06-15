@@ -95,6 +95,8 @@ int name_is_valid(char* name)
     //Check for banned keywords as names
     if(strcmp(name, "admin") == 0)
         return 0;
+    else if(strcmp(name, "server") == 0)
+        return 0;
     else if(strcmp(name, "user") == 0)
         return 0;
     else if(strcmp(name, "default") == 0)

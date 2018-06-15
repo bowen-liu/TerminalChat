@@ -18,7 +18,7 @@ void group_invited()
     printf("You are being invited to the group \"%s\" by user \"%s\".\n", group_name, invite_sender);
 
     //Automatically accept it for now
-    sprintf(buffer, "!joingroup @@%s", group_name);
+    sprintf(buffer, "!join @@%s", group_name);
     send_msg_client(buffer, strlen(buffer)+1);
 }
 
@@ -35,18 +35,18 @@ void group_joined()
 
 static void group_kicked_banned(int banned)
 {
-    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1];
+    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[USERNAME_LENG+1];
     Namelist *current_group_name, *tmp;
 
     if(banned)
     {
-        sscanf(buffer, "!groupbanned=%[^,],by=%s", group_name, kicked_by);
-        printf("You have been banned from the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
+        sscanf(buffer, "!groupbanned=%[^,],by=%[^,],reason=%s", group_name, kicked_by, reason);
+        printf("You have been banned from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
     }
     else
     {
-        sscanf(buffer, "!groupkicked=%[^,],by=%s", group_name, kicked_by);
-        printf("You have been kicked from the group \"%s\" by user \"%s\".\n", group_name, kicked_by);
+        sscanf(buffer, "!groupkicked=%[^,],by=%[^,],reason=%s", group_name, kicked_by, reason);
+        printf("You have been kicked from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
     }
     
     //Find the entry in the client's group_joined list and remove the entry
@@ -149,7 +149,7 @@ int leaving_group()
     char *groupname_plain;
     Namelist *current_group_name, *tmp_name;
 
-    sscanf(buffer, "!leavegroup %s", groupname);
+    sscanf(buffer, "!leave %s", groupname);
     groupname_plain = plain_name(groupname);
 
     //Find the entry in the client's group_joined list and remove the entry

@@ -28,7 +28,7 @@
 #define DEFAULT_SERVER_PORT     16996
 #define LOBBY_GROUP_NAME        ((const char*) "all")
 
-#define USERNAME_LENG           32                                  //Maximum length of usernames and group names
+#define USERNAME_LENG           64                                  //Maximum length of usernames and group names
 #define BUFSIZE                 2048                                //Buffer size used to hold a single received message
 #define XFER_BUFSIZE            1048576                             //Buffer size used to hold a piece of data during file transfer
 #define MAX_MSG_LENG            512                                 //Maximum size of messages can be entered by the user

@@ -485,49 +485,82 @@ static inline int parse_client_command()
 
 static void admin_unban_user(char *buffer)
 {
+    char unban_target[USERNAME_LENG+1];
+    IP_List *ban_entry;
+    char ipaddr_str[INET_ADDRSTRLEN];
+    uint32_t target_ipaddr;
 
+    sscanf(buffer, "!unbanip %s", unban_target);
+
+    //We only allow banned hostname/IP addresses to be entered  
+    if(hostname_to_ip(unban_target, "0", ipaddr_str))
+        target_ipaddr = inet_addr(ipaddr_str);
+    else
+    {
+        printf("Target \"%s\" was not found or not banned.\n", unban_target);
+        return;
+    }
+
+    //Unban the IP address, if an entry was located
+    HASH_FIND_INT(banned_ips, &target_ipaddr, ban_entry);
+    if(ban_entry)
+    {
+        HASH_DEL(banned_ips, ban_entry);
+        free(ban_entry);
+        printf("Target \"%s\"has been unbanned.\n", unban_target);
+    }
+    else
+        printf("Target \"%s\" was not found or not banned.\n", unban_target);
 }
 
 //TODO: Allow direct IP/hostname banning
 static void admin_ban_user(char *buffer)
 {
-    char *ban_msg;
     char target_name[USERNAME_LENG+1], *target_name_plain;
     User *target_user;
+    Client *curr, *tmp;
 
-    //char ipaddr_str[INET_ADDRSTRLEN];
+    char ipaddr_str[INET_ADDRSTRLEN];
+    uint32_t target_ipaddr;
     IP_List *ban_entry;
 
-    sscanf(buffer, "!banuser %s", target_name);
+    sscanf(buffer, "!banip %s", target_name);
     target_name_plain = plain_name(target_name);
     
-    //Locate the member to be kicked
+    //Locate the member to be banned
     HASH_FIND_STR(active_users, target_name_plain, target_user);
-    if(!target_user)
+    if(target_user)
     {
-        //if(!hostname_to_ip(target_name, "0", ipaddr_str))
-            printf("User \"%s\" was not found.\n", target_name);
-            return;
+        target_ipaddr = target_user->c->sockaddr.sin_addr.s_addr;
+        strcpy(ipaddr_str, inet_ntoa(target_user->c->sockaddr.sin_addr));
     }
 
-    //Add the user's associated IP address to the global ban list
-    HASH_FIND_INT(banned_ips, &(uint32_t){target_user->c->sockaddr.sin_addr.s_addr}, ban_entry);
+    //We also allow IP/hostnames to be directly specified
+    else if(hostname_to_ip(target_name, "0", ipaddr_str))
+        target_ipaddr = inet_addr(ipaddr_str);
+    
+    else
+    {
+        printf("Target \"%s\" was not found.\n", target_name);
+        return;
+    }
+
+    //Add the user's associated IP address to the global ban list if it doesn't already exist
+    HASH_FIND_INT(banned_ips, &target_ipaddr, ban_entry);
     if(!ban_entry)
     {
         ban_entry = calloc(1, sizeof(IP_List));
-        ban_entry->ipaddr = current_client->sockaddr.sin_addr.s_addr;
+        ban_entry->ipaddr = target_ipaddr;
         HASH_ADD_INT(banned_ips, ipaddr, ban_entry);
     }
+    printf("Target \"%s\" has been IP banned (%s).\n", target_name, ipaddr_str);
 
-    //Tell the user about the ban
-    ban_msg = malloc(BUFSIZE);
-    sprintf(ban_msg, "User \"%s\" has been IP banned (%s) from the server.", target_user->username, inet_ntoa(target_user->c->sockaddr.sin_addr));
-    printf("%s\n", ban_msg);
-    send_msg(target_user->c, ban_msg, strlen(ban_msg)+1);
-    free(ban_msg);
-
-    //Drop connections
-    disconnect_client(target_user->c, "IP Banned");
+    //Drop every user currently connect with the banned IP address
+    HASH_ITER(hh, active_connections, curr, tmp)
+    {
+        if(curr->sockaddr.sin_addr.s_addr == target_ipaddr)
+            disconnect_client(curr, "IP Banned");
+    }
 }
 
 static void admin_drop_user(char *buffer)
@@ -569,10 +602,10 @@ static void handle_admin_commands(char *buffer)
     else if(strncmp(buffer, "!dropuser ", 10) == 0)
         admin_drop_user(buffer);
 
-    else if(strncmp(buffer, "!banuser ", 9) == 0)
+    else if(strncmp(buffer, "!banip ", 7) == 0)
         admin_ban_user(buffer);
     
-    else if(strncmp(buffer, "!unbanuser ", 11) == 0)
+    else if(strncmp(buffer, "!unbanip ", 9) == 0)
         admin_unban_user(buffer);
 
     else

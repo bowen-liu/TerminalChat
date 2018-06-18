@@ -752,6 +752,7 @@ int unban_from_group()
     User *unban_user;
 
     IP_List *ban_entry;
+    uint32_t target_ipaddr;
     char ipaddr_str[INET_ADDRSTRLEN];
 
     if(!msg_target)
@@ -765,35 +766,37 @@ int unban_from_group()
     //Check if the requesting user has suffice permissions to kick others
     if(!(calling_member->permissions & GRP_PERM_CAN_KICK))
     {
-        printf("User \"%s\" tried to kick users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
+        printf("User \"%s\" tried to ban users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
         send_msg(current_client, "NoPermission", 13);
         return 0;
     }
 
     unban_msg = malloc(MAX_MSG_LENG+1);
 
-    //Kick each member specified in the command
-    token = strtok(newbuffer, " ");                  //Skip the command header "!ban"
+    //unban each target specified in the command
+    token = strtok(newbuffer, " ");                  //Skip the command header "!unban"
     token = strtok(NULL, " ");
     while(token)
     {
         //Locate the member to be unbanned (from the global list of users)
         HASH_FIND_STR(active_users, token, unban_user);
         if(unban_user)
-        {
-            //Find the banned entry associated with the member's IP address
-            HASH_FIND_INT(group->banned_ips, &(uint32_t){unban_user->c->sockaddr.sin_addr.s_addr}, ban_entry);
-        }
+            target_ipaddr = unban_user->c->sockaddr.sin_addr.s_addr;
+
+        //We also allowed banned hostname/IP addresses to be entered 
+        else if(hostname_to_ip(token, "0", ipaddr_str))
+            target_ipaddr = inet_addr(ipaddr_str);
+
         else
         {
-            //We also allowed banned hostname/IP addresses to be entered
-            if(!hostname_to_ip(token, "0", ipaddr_str))
-                ban_entry = NULL;
-            else
-                HASH_FIND_INT(group->banned_ips, &(uint32_t){inet_addr(ipaddr_str)}, ban_entry);
+            printf("Target \"%s\" was not found or not banned.\n", token);
+            send_msg(current_client, "UserNotFound", 13);
+            token = strtok(NULL, " ");
+            continue;
         }
 
         //Unban the IP address, if an entry was located
+        HASH_FIND_INT(group->banned_ips, &target_ipaddr, ban_entry);
         if(ban_entry)
         {
             HASH_DEL(group->banned_ips, ban_entry);

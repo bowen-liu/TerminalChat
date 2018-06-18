@@ -11,9 +11,6 @@ typedef struct {
 } Member;
 
 
-extern Namelist* groups_joined;
-
-
 /*Handle Server Control Messages*/
 void group_invited();
 void group_joined();

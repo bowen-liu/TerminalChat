@@ -2,9 +2,6 @@
 #include "client.h"
 
 
-Namelist* groups_joined;                //List of all groups I'm currently joined
-
-
 /******************************/
 /*  Server Control Messages   */
 /******************************/
@@ -24,57 +21,26 @@ void group_invited()
 
 void group_joined()
 {
-    Namelist *groupname = malloc(sizeof(Namelist));
-
-    sscanf(buffer, "!groupjoined=%s", groupname->name);
-    printf("You have joined the group \"%s\".\n", groupname->name);
-
-    //Record the invited group into the list of participating groups
-    LL_APPEND(groups_joined, groupname);
-}
-
-static void group_kicked_banned(int banned)
-{
-    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[DISCONNECT_REASON_LENG+1];
-    Namelist *current_group_name, *tmp;
-
-    if(banned)
-    {
-        sscanf(buffer, "!groupbanned=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
-        printf("You have been banned from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
-    }
-    else
-    {
-        sscanf(buffer, "!groupkicked=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
-        printf("You have been kicked from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
-    }
+    char groupname[USERNAME_LENG+1];
     
-    //Find the entry in the client's group_joined list and remove the entry
-    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp)
-    {
-        if(strcmp(group_name, current_group_name->name) == 0)
-            break;
-        else 
-            current_group_name = NULL;
-    }
-
-    if(current_group_name)
-    {
-        LL_DELETE(groups_joined, current_group_name);
-        free(current_group_name);
-    }
-    else
-        printf("You do not appear to be a member of the group \"%s\".\n", group_name);
+    sscanf(buffer, "!groupjoined=%s", groupname);
+    printf("You have joined the group \"%s\".\n", groupname);
 }
 
 void group_kicked()
 {
-    return group_kicked_banned(0);
+    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[DISCONNECT_REASON_LENG+1];
+
+    sscanf(buffer, "!groupkicked=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
+    printf("You have been kicked from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
 }
 
 void group_banned()
 {
-    return group_kicked_banned(1);
+    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[DISCONNECT_REASON_LENG+1];
+
+    sscanf(buffer, "!groupbanned=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
+    printf("You have been banned from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
 }
 
 
@@ -147,28 +113,10 @@ int leaving_group()
 {
     char groupname[USERNAME_LENG+3];
     char *groupname_plain;
-    Namelist *current_group_name, *tmp_name;
 
     sscanf(buffer, "!leave %s", groupname);
     groupname_plain = plain_name(groupname);
 
-    //Find the entry in the client's group_joined list and remove the entry
-    LL_FOREACH_SAFE(groups_joined, current_group_name, tmp_name)
-    {
-        if(strcmp(groupname_plain, current_group_name->name) == 0)
-            break;
-        else 
-            current_group_name = NULL;
-    }
-
-    if(!current_group_name)
-    {
-        printf("You do not appear to be a member of the group \"%s\".\n", groupname_plain);
-        return 1;       //Send the leave command to server anyways, just in case if we didn't record the join
-    }
-
     printf("You have left the group \"%s\".\n", groupname_plain);
-    LL_DELETE(groups_joined, current_group_name);
-    free(current_group_name);
     return 1;
 }

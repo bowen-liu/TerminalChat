@@ -55,8 +55,8 @@ typedef struct timerevent{
 
 
 User* get_current_client_user();
-void kill_connection(int socketfd);
-void disconnect_client(Client *c);
+void kill_connection(int *socketfd);
+void disconnect_client(Client *c, char *reason);
 void cleanup_timer_event(TimerEvent *timer);
 
 #endif

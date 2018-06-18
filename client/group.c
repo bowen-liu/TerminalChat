@@ -35,17 +35,17 @@ void group_joined()
 
 static void group_kicked_banned(int banned)
 {
-    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[USERNAME_LENG+1];
+    char group_name[USERNAME_LENG+1], kicked_by[USERNAME_LENG+1], reason[DISCONNECT_REASON_LENG+1];
     Namelist *current_group_name, *tmp;
 
     if(banned)
     {
-        sscanf(buffer, "!groupbanned=%[^,],by=%[^,],reason=%s", group_name, kicked_by, reason);
+        sscanf(buffer, "!groupbanned=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
         printf("You have been banned from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
     }
     else
     {
-        sscanf(buffer, "!groupkicked=%[^,],by=%[^,],reason=%s", group_name, kicked_by, reason);
+        sscanf(buffer, "!groupkicked=%[^,],by=%[^,],reason=%[^$]", group_name, kicked_by, reason);
         printf("You have been kicked from the group \"%s\" by user \"%s\". Reason: %s\n", group_name, kicked_by, reason);
     }
     
@@ -80,9 +80,9 @@ void group_banned()
 
 void user_left_group()
 {
-    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1], reason[BUFSIZE];
+    char groupname[USERNAME_LENG+1], username[USERNAME_LENG+1], reason[DISCONNECT_REASON_LENG+1];
 
-    sscanf(buffer, "!leftgroup=%[^,],user=%[^,],reason=%s", groupname, username, reason);
+    sscanf(buffer, "!leftgroup=%[^,],user=%[^,],reason=%[^$]", groupname, username, reason);
     printf("User \"%s\" has left the group \"%s\". ", username, groupname);
 
     if(strcmp(reason, "none") == 0)

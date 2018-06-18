@@ -619,6 +619,21 @@ int incoming_group_file()
     return 0;
 }
 
+int new_group_file_ready()
+{
+    char groupname[USERNAME_LENG+1], uploader[USERNAME_LENG+1], filename[MAX_FILENAME+1];
+    unsigned int fileid;
+    size_t filesize;
+
+    sscanf(buffer, "!putfile=%[^,],filename=%[^,],id=%u,size=%zu,uploader=%s", 
+            groupname, filename, &fileid, &filesize, uploader);
+
+    printf("Group \"%s\" has a new file available for download. \"%s\" (fileid: %u, %zu bytes), Uploaded by \"%s\".\n",
+             groupname, filename, fileid, filesize, uploader);
+
+    return 1;
+}
+
 
 
 /******************************/

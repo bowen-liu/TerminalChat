@@ -56,22 +56,24 @@ void cleanup_timer_event(TimerEvent *event)
     free(event);
 }
 
-void kill_connection(int socketfd)
+void kill_connection(int *socketfd)
 {
-    if(epoll_ctl(connections_epollfd, EPOLL_CTL_DEL, socketfd, NULL) < 0) 
-        perror("Failed to unregister the disconnected client from epoll!");
+    //Unregister the connection's epoll (if registered)
+    epoll_ctl(connections_epollfd, EPOLL_CTL_DEL, *socketfd, NULL);
 
-    close(socketfd);
+    //Kill the connection
+    close(*socketfd);
+    *socketfd = 0;
 }
 
 static inline void cleanup_unregistered_connection(Client *c)
 {
     printf("Dropping unregistered connection from %s:%u...\n", inet_ntoa(c->sockaddr.sin_addr), ntohs(c->sockaddr.sin_port));
-    kill_connection(c->socketfd);
+    kill_connection(&c->socketfd);
 }
 
 
-static inline void cleanup_user_connection(Client *c)
+static inline void cleanup_user_connection(Client *c, char *reason)
 {
     User *user;
 
@@ -81,12 +83,11 @@ static inline void cleanup_user_connection(Client *c)
     cancel_user_transfer(c);
 
     //Close the main user's connection
-    kill_connection(c->socketfd);
+    kill_connection(&c->socketfd);
     printf("Closed user connection for \"%s\"\n", c->username);
-    c->socketfd = 0;
         
     //Leave participating chat groups
-    disconnect_client_group_cleanup(c);
+    disconnect_client_group_cleanup(c, reason);
         
     //Free up resources used by the user
     HASH_FIND_STR(active_users, c->username, user);
@@ -97,8 +98,11 @@ static inline void cleanup_user_connection(Client *c)
 }
 
 
-void disconnect_client(Client *c)
+void disconnect_client(Client *c, char *reason)
 {    
+    if(!reason)
+        reason = "Disconnect";
+    
     //Check if the connection is for a registered client
     if(c->connection_type == UNREGISTERED_CONNECTION)
         cleanup_unregistered_connection(c);
@@ -109,7 +113,7 @@ void disconnect_client(Client *c)
 
     /*The connection is for a regular user*/
     else
-        cleanup_user_connection(c); 
+        cleanup_user_connection(c, reason); 
 
     //Destroy the connection's idle timer, if it exists
     if(c->idle_timer)
@@ -141,7 +145,7 @@ static unsigned int transfer_next_pending(Client *c)
 
     retval = transfer_next_common(c->socketfd, &c->pending_msg);
     if(retval <= 0)
-        disconnect_client(c);
+        disconnect_client(c, "Connection Failed");
     
     //Remove the EPOLLOUT notification once long send has completed
     if(c->pending_msg.pending_op == NO_XFER_OP)
@@ -157,10 +161,13 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
 {
     int retval;
     
+    if(c->socketfd == 0)
+        return 0;
+
     retval = send_msg_common(c->socketfd, buffer, size, &c->pending_msg);
     
     if(retval < 0)
-        disconnect_client(c);
+        disconnect_client(c, "Connection Failed");
     else if(retval == 0)
         return 0;
 
@@ -175,10 +182,13 @@ unsigned int send_long_msg(Client *c, char* buffer, size_t size)
 {
     int retval;
     
+    if(c->socketfd == 0)
+            return 0;
+
     retval = send_msg_notruncate(c->socketfd, buffer, size, &c->pending_msg);
     
     if(retval < 0)
-        disconnect_client(c);
+        disconnect_client(c, "Connection Failed");
     else if(retval == 0)
         return 0;
 
@@ -220,7 +230,7 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
     retval = recv_msg_common(c->socketfd, buffer, size, &c->pending_msg);
     
     if(retval < 0)
-        disconnect_client(c);
+        disconnect_client(c, "Connection Failed");
     else if(retval == 0)
         return 0;
 
@@ -236,11 +246,12 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
 //Note: This function does not handle partial sends/recvs, as it deals solely with unconnected clients
 static inline int register_client_connection()
 {
-    char *username = malloc(USERNAME_LENG+1);
+    char username[USERNAME_LENG+1];
+    unsigned int orig_username_leng;
     User *registered_user;
 
-    char *new_username;
     int duplicates = 0, max_duplicates_allowed;
+    char *reg_msg;
 
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
@@ -253,9 +264,10 @@ static inline int register_client_connection()
     if(!name_is_valid(username))
     {
         send_direct(current_client->socketfd, "InvalidUsername", 16);
-        disconnect_client(current_client);
+        disconnect_client(current_client, NULL);
         return 0;
     }
+    orig_username_leng = strlen(username);
 
     //Cancel the unregistered idle timer
     cleanup_timer_event(current_client->idle_timer);
@@ -267,10 +279,8 @@ static inline int register_client_connection()
     {
         if(duplicates == 0)
         {
-            new_username = malloc(USERNAME_LENG+1);
-
             //How many reminaing free bytes in the username can be used for appending numbers?
-            max_duplicates_allowed = USERNAME_LENG - strlen(username) - 1;
+            max_duplicates_allowed = USERNAME_LENG - orig_username_leng - 1;
 
             //Determine the largest numerical value (up to 999) can be used from the free bytes
             if(max_duplicates_allowed > 3)
@@ -287,38 +297,35 @@ static inline int register_client_connection()
         {
             printf("The username \"%s\" cannot support further clients.\n", username);
             send_direct(current_client->socketfd, "InvalidUsername", 16);
-            disconnect_client(current_client);
+            disconnect_client(current_client, NULL);
             return 0;
         }
 
-        //Test if the new name with a newly appended value is used
-        sprintf(new_username, "%s_%d", username, duplicates);
-        HASH_FIND_STR(active_users, new_username, registered_user);
+        //Append a sequential number after the duplicate username, and check if it already exists
+        sprintf(&username[orig_username_leng], "_%d", duplicates);
+        HASH_FIND_STR(active_users, username, registered_user);
     }
 
     if(duplicates)
-    {
-        printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, new_username);
-        free(username);
-        username = new_username;
-    }
+        printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, username);
 
     //Register the client's requested username
     registered_user = malloc(sizeof(User));
     registered_user->c = current_client;
     strcpy(registered_user->username, username);
     HASH_ADD_STR(active_users, username, registered_user);
+    ++total_users;
 
     //Update the client descriptor
     current_client->connection_type = USER_CONNECTION;
     strcpy(current_client->username, username);
-    free(username);
 
-    printf("Registering user \"%s\"\n", current_client->username);
-    sprintf(buffer, "!regreply:username=%s", current_client->username);
-    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
-    ++total_users;
-
+    //Reply to the new user with its new requested username
+    reg_msg = malloc(BUFSIZE);
+    sprintf(reg_msg, "!regreply:username=%s", current_client->username);
+    send_direct(current_client->socketfd, reg_msg, strlen(reg_msg)+1);
+    free(reg_msg);
+    
     printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
     
     return 1;
@@ -396,7 +403,7 @@ static inline int parse_client_command()
     if(strcmp(msg_body, "!close") == 0)
     {
         printf("Closing connection with client %s on port %d\n", inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port));
-        disconnect_client(current_client);
+        disconnect_client(current_client, NULL);
         return -1;
     }
 
@@ -481,8 +488,10 @@ static void admin_unban_user(char *buffer)
 
 }
 
+//TODO: Allow direct IP/hostname banning
 static void admin_ban_user(char *buffer)
 {
+    char *ban_msg;
     char target_name[USERNAME_LENG+1], *target_name_plain;
     User *target_user;
 
@@ -510,22 +519,20 @@ static void admin_ban_user(char *buffer)
         HASH_ADD_INT(banned_ips, ipaddr, ban_entry);
     }
 
-    printf("User \"%s\" has been IP banned (%s).\n", target_user->username, inet_ntoa(target_user->c->sockaddr.sin_addr));
+    //Tell the user about the ban
+    ban_msg = malloc(BUFSIZE);
+    sprintf(ban_msg, "User \"%s\" has been IP banned (%s) from the server.", target_user->username, inet_ntoa(target_user->c->sockaddr.sin_addr));
+    printf("%s\n", ban_msg);
+    send_msg(target_user->c, ban_msg, strlen(ban_msg)+1);
+    free(ban_msg);
 
     //Drop connections
-    /*if(target_member)
-    {
-        disconnect_client(target_member->c);
-    }
-    else
-    {
-        HASH_ITER
-    }*/
-
+    disconnect_client(target_user->c, "IP Banned");
 }
 
 static void admin_drop_user(char *buffer)
 {
+    char *kick_msg;
     char target_name[USERNAME_LENG+1], *target_name_plain;
     User *target_user;
 
@@ -539,7 +546,14 @@ static void admin_drop_user(char *buffer)
         return;
     }
 
-    disconnect_client(target_user->c);
+    //Tell the user about the ban
+    kick_msg = malloc(BUFSIZE);
+    sprintf(kick_msg, "User \"%s\" has been dropped from the server.", target_user->username);
+    printf("%s\n", kick_msg);
+    send_msg(target_user->c, kick_msg, strlen(kick_msg)+1);
+    free(kick_msg);
+
+    disconnect_client(target_user->c, "Dropped by Admin");
 }
 
 static void handle_admin_commands(char *buffer)
@@ -602,7 +616,7 @@ static int handle_new_connection()
         printf("Dropping new connection on %s:%d. IP address has been banned.\n", 
                 inet_ntoa(new_client->sockaddr.sin_addr), ntohs(new_client->sockaddr.sin_port));
         
-        close(new_client->socketfd);
+        kill_connection(&new_client->socketfd);
         free(new_client);
         return 0;
     }
@@ -662,7 +676,7 @@ static int handle_client_msg(int use_pending_msg)
             return register_recv_transfer_connection();
 
         else
-            disconnect_client(current_client);   
+            disconnect_client(current_client, NULL);   
         return 0;
     }
 
@@ -751,7 +765,7 @@ static void handle_timer_events()
             {
                 if(current_timer_event->c->connection_type == UNREGISTERED_CONNECTION)
                 {                    
-                    disconnect_client(current_timer_event->c);
+                    disconnect_client(current_timer_event->c, NULL);
                     current_timer_event = NULL;
                 }
             }
@@ -819,7 +833,7 @@ static inline void server_main_loop()
                 //Handle EPOLLRDHUP: the client has closed its connection
                 if(events[i].events & EPOLLRDHUP)
                 {
-                    disconnect_client(current_client);
+                    disconnect_client(current_client, NULL);
                     continue;
                 }    
                 
@@ -849,7 +863,6 @@ static inline void server_main_loop()
                     else if(current_client->pending_msg.pending_op == SENDING_OP)
                     {
                         transfer_next_pending(current_client);
-                        //printf("\nBuffer AFTER sent: \"%s\"\n", current_client->pending_msg.pending_buffer);
 
                         if(current_client->pending_msg.pending_op == NO_XFER_OP)
                         {

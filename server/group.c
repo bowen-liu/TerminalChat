@@ -37,8 +37,8 @@ unsigned int send_group(Group* group, char* buffer, size_t size)
 
     HASH_ITER(hh, group->members, curr, tmp) 
     {
-        //Do not send if the current member was invited but hasn't joined the group 
-        if(!(curr->permissions & GRP_PERM_HAS_JOINED))
+        //Do not send if the current member was invited but hasn't joined the group, or have a closed socket (pending disconnect)
+        if(!(curr->permissions & GRP_PERM_HAS_JOINED) || !curr->c->socketfd)
             continue;
         
         if(!send_msg(curr->c, buffer, size))
@@ -221,19 +221,19 @@ static void remove_group(Group *group)
     free(group);
 }
 
-void disconnect_client_group_cleanup(Client *c)
+void disconnect_client_group_cleanup(Client *c, char *reason)
 {
     Namelist *current_group_name, *tmp_name;
     Group *group;
-    
+
     //Leave all participating chat groups.
     LL_FOREACH_SAFE(c->groups_joined, current_group_name, tmp_name)
     {   
         HASH_FIND_STR(groups, current_group_name->name, group);
         if(group)
         {
-            leave_group_direct(group, current_client, "Disconnect");
-            LL_DELETE(current_client->groups_joined, current_group_name);
+            leave_group_direct(group, c, reason);
+            LL_DELETE(c->groups_joined, current_group_name);
             free(current_group_name);
         }
     }
@@ -1153,8 +1153,8 @@ int add_file_to_group(Group *group, char *uploader, char *filename, size_t files
     //TODO: Expiry timer for files uploaded to groups
 
     new_file_msg = malloc(MAX_MSG_LENG+1);
-    sprintf(new_file_msg, "New file available for download: \"%s\" (fileid: %d, %zu bytes) uploaded by \"%s\".", 
-                new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);
+    sprintf(new_file_msg, "!putfile=%s,filename=%s,id=%u,size=%zu,uploader=%s", 
+                group->groupname, new_file->filename, new_file->fileid, new_file->filesize, new_file->uploader);
     send_group(group, new_file_msg, strlen(new_file_msg)+1);
     free(new_file_msg);
 

@@ -46,9 +46,9 @@ typedef struct {
 typedef struct {
     char username[USERNAME_LENG+1];
     Client *c;
-    UT_hash_handle hh;
-
     int permissions;
+
+    UT_hash_handle hh;
 } Group_Member;
 
 
@@ -80,7 +80,7 @@ void create_lobby_group();
 unsigned int send_lobby(Client *c, char* buffer, size_t size);
 unsigned int send_group(Group* group, char* buffer, size_t size);
 int group_msg();
-void disconnect_client_group_cleanup(Client *c);
+void disconnect_client_group_cleanup(Client *c, char *reason);
 int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
 Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions);
 

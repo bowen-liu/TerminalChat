@@ -72,6 +72,7 @@ int incoming_file();
 int recver_accepted_file();
 int rejected_file_sending();
 void file_transfer_cancelled();
+int new_group_file_ready();
 int incoming_group_file();
 
 

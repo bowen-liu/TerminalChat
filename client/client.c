@@ -285,8 +285,12 @@ static void parse_control_message(char* cmd_buffer)
     else if(strncmp("!filelist=", buffer, 10) == 0)
         parse_filelist();
 
+    else if(strncmp("!putfile=", buffer, 9) == 0)
+        new_group_file_ready();
+
     else if(strncmp("!getfile=", buffer, 9) == 0)
         incoming_group_file();
+    
 
 
     else

@@ -156,7 +156,7 @@ void cleanup_transfer_connection(Client *c)
     //Check if the transfer connection has been terminated already (usually when the user quits while transferring files)
     if(!xferargs)
     {
-        kill_connection(c->socketfd);
+        kill_connection(&c->socketfd);
         return;
     }
 
@@ -166,7 +166,7 @@ void cleanup_transfer_connection(Client *c)
     //Also remove the transfer args at my main connection, if this is a client-client file transfer
     xferargs->myself->c->file_transfers = NULL;                 
     
-    kill_connection(c->socketfd);
+    kill_connection(&c->socketfd);
     
     if(xferargs->piece_buffer)
         free(xferargs->piece_buffer);
@@ -247,16 +247,21 @@ void cancel_user_transfer(Client *c)
 
 void transfer_invite_expired(Client *c)
 {
+    char *expire_msg;
+    
     if(!c->file_transfers)
         return;
     
+    expire_msg = malloc(BUFSIZE);
+    
     //Notify the sender of file expiry
-    sprintf(buffer, "!rejectfile=%s,reason=%s", c->file_transfers->target_user->username, "Expired");
-    send_msg(c, buffer, strlen(buffer)+1);
+    sprintf(expire_msg, "!rejectfile=%s,reason=%s", c->file_transfers->target_user->username, "Expired");
+    send_msg(c, expire_msg, strlen(expire_msg)+1);
 
     //Notify the receiver of file expiry
-    sprintf(buffer, "!cancelfile=%s,reason=%s", c->username, "Expired");
-    send_msg(c->file_transfers->target_user->c, buffer, strlen(buffer)+1);
+    sprintf(expire_msg, "!cancelfile=%s,reason=%s", c->username, "Expired");
+    send_msg(c->file_transfers->target_user->c, expire_msg, strlen(expire_msg)+1);
+    free(expire_msg);
 
     cancel_user_transfer(c);
 }
@@ -271,6 +276,7 @@ void transfer_invite_expired(Client *c)
 
 int register_send_transfer_connection()
 {
+    char *accept_msg;
     char sender_name[USERNAME_LENG+1], recver_name[USERNAME_LENG+1];
     XferTarget myself_ret, target_ret;
     FileXferArgs_Server request_args, *xferargs;
@@ -278,7 +284,7 @@ int register_send_transfer_connection()
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
         printf("Connection already registered. Type: %d.\n", current_client->connection_type);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
@@ -296,7 +302,7 @@ int register_send_transfer_connection()
     {
         printf("Mismatching SENDING transfer connection.\n");
         send_direct(current_client->socketfd, "WrongInfo", 10);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
@@ -305,7 +311,7 @@ int register_send_transfer_connection()
     {
         printf("Sender is not a user!\n");
         send_direct(current_client->socketfd, "WrongInfo", 10);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
@@ -330,15 +336,18 @@ int register_send_transfer_connection()
     {
         printf("Target is not a user/group!\n");
         send_direct(current_client->socketfd, "WrongInfo", 10);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
     current_client->connection_type = TRANSFER_CONNECTION;
     current_client->file_transfers = xferargs;
 
-    sprintf(buffer, "Accepted");
-    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
+    accept_msg = malloc(BUFSIZE);
+    sprintf(accept_msg, "Accepted");
+    send_direct(current_client->socketfd, accept_msg, strlen(accept_msg)+1);
+    free(accept_msg);
+
     printf("Accepted SENDING transfer connection for file \"%s\" (%zu bytes, token: %s, checksum: %x), from \"%s\" to \"%s\".\n",
             xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, sender_name, recver_name);
 
@@ -353,6 +362,7 @@ int register_send_transfer_connection()
 
 int register_recv_transfer_connection()
 {
+    char *accept_msg;
     char sender_name[USERNAME_LENG+1], recver_name[USERNAME_LENG+1];
     XferTarget myself_ret, target_ret;
     FileXferArgs_Server request_args, *xferargs;
@@ -360,7 +370,7 @@ int register_recv_transfer_connection()
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
         printf("Connection already registered. Type: %d.\n", current_client->connection_type);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
@@ -377,7 +387,7 @@ int register_recv_transfer_connection()
     {
         printf("Mismatching RECEIVING transfer connection.\n");
         send_direct(current_client->socketfd, "WrongInfo", 10);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
@@ -402,15 +412,18 @@ int register_recv_transfer_connection()
     {
         printf("Target is not a user/group!\n");
         send_direct(current_client->socketfd, "WrongInfo", 10);
-        disconnect_client(current_client);
+        disconnect_client(current_client, "Error");
         return 0;
     }
 
     current_client->connection_type = TRANSFER_CONNECTION;
     current_client->file_transfers = xferargs;
 
-    sprintf(buffer, "Accepted");
-    send_direct(current_client->socketfd, buffer, strlen(buffer)+1);
+    accept_msg = malloc(BUFSIZE);
+    sprintf(accept_msg, "Accepted");
+    send_direct(current_client->socketfd, accept_msg, strlen(accept_msg)+1);
+    free(accept_msg);
+
     printf("Accepted RECEIVING transfer connection for file \"%s\" (%zu bytes, token: %s), from \"%s\" to \"%s\".\n", 
             xferargs->filename, xferargs->filesize, xferargs->token, sender_name, recver_name);
 
@@ -431,13 +444,15 @@ int register_recv_transfer_connection()
 
 int new_client_transfer()
 {
-    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+    FileXferArgs_Server *xferargs;
+    char *sendfile_msg;
     char target_name[USERNAME_LENG+1];
 
     if(!msg_target)
         return 0;
     ++msg_target;
 
+    xferargs = calloc(1, sizeof(FileXferArgs_Server));
     sscanf(msg_body, "!sendfile=%[^,],size=%zu,crc=%x", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum);
     strcpy(target_name, msg_target);
@@ -460,13 +475,15 @@ int new_client_transfer()
     generate_token(xferargs->token, TRANSFER_TOKEN_SIZE);
 
     //Send out a file transfer request to the target
-    sprintf(buffer, "!sendfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+    sendfile_msg = malloc(BUFSIZE);
+    sprintf(sendfile_msg, "!sendfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
             xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
     printf("Forwarding file transfer request from user \"%s\" to  user \"%s\", for file \"%s\" (%zu bytes, token: %s, checksum: %x)\n", 
             current_client->username, xferargs->target_user->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum);
 
-    send_msg(xferargs->target_user->c, buffer, strlen(buffer)+1);
+    send_msg(xferargs->target_user->c, sendfile_msg, strlen(sendfile_msg)+1);
     send_msg(current_client, "Delivered", 10);
+    free(sendfile_msg);
 
     //Set a timeout event for the request
     xferargs->timeout = calloc(1, sizeof(TimerEvent));
@@ -488,9 +505,11 @@ int new_client_transfer()
 int accepted_file_transfer()
 {
     char target_username[USERNAME_LENG+1];
+    char *accept_msg;
     XferTarget target_ret;
     User *target;
     FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+
 
     sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_username, xferargs->token);
@@ -527,16 +546,21 @@ int accepted_file_transfer()
     target->c->file_transfers->timeout = NULL;
     
     //Forward the accept message to the sender
-    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+    accept_msg = malloc(BUFSIZE);
+    sprintf(accept_msg, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
             xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
-    return send_msg(xferargs->target_user->c, buffer, strlen(buffer)+1);
+    send_msg(xferargs->target_user->c, accept_msg, strlen(accept_msg)+1);
+    free(accept_msg);
+
+    return 1;
 }
 
 
 int rejected_file_transfer()
 {
     char target_name[USERNAME_LENG+1];
-    char reason[MAX_MSG_LENG+1];
+    char reason[DISCONNECT_REASON_LENG+1];
+    char *reject_msg;
     User *target;
 
     sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
@@ -553,10 +577,12 @@ int rejected_file_transfer()
     send_msg(current_client, "Cancelled", 10); 
 
     //Notify the target 
-    sprintf(buffer, "!rejectfile=%s,reason=%s", current_client->username, reason);
-    send_msg(target->c, buffer, strlen(buffer)+1);
-    cancel_user_transfer(target->c);
+    reject_msg = malloc(BUFSIZE);
+    sprintf(reject_msg, "!rejectfile=%s,reason=%s", current_client->username, reason);
+    send_msg(target->c, reject_msg, strlen(reject_msg)+1);
+    free(reject_msg);
 
+    cancel_user_transfer(target->c);
     return 1;
 }
 
@@ -564,7 +590,8 @@ int rejected_file_transfer()
 int user_cancelled_transfer()
 {
     char target_name[USERNAME_LENG+1];
-    char reason[MAX_MSG_LENG+1];
+    char reason[DISCONNECT_REASON_LENG+1];
+    char *reject_msg;
     
     sscanf(buffer, "!cancelfile=%[^,],reason=%s", target_name, reason);
 
@@ -578,10 +605,12 @@ int user_cancelled_transfer()
     send_msg(current_client, "Cancelled", 10); 
 
     //Notify the target 
-    sprintf(buffer, "!cancelfile=%s,reason=%s", current_client->username, reason);
-    send_msg(current_client->file_transfers->target_user->c, buffer, strlen(buffer)+1);    
-    cancel_user_transfer(current_client);
+    reject_msg = malloc(BUFSIZE);
+    sprintf(reject_msg, "!cancelfile=%s,reason=%s", current_client->username, reason);
+    send_msg(current_client->file_transfers->target_user->c, reject_msg, strlen(reject_msg)+1);  
+    free(reject_msg);
 
+    cancel_user_transfer(current_client);
     return 1;
 }
 
@@ -672,7 +701,7 @@ int client_data_forward_sender_ready()
         bytes_recvd = group_recv_next_piece();
         if(!bytes_recvd)
         {
-            disconnect_client(current_client);
+            disconnect_client(current_client, "Connection Failed");
             return 0;
         }
         
@@ -701,13 +730,15 @@ int client_data_forward_sender_ready()
 
 int put_new_file_to_group()
 {
-    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+    FileXferArgs_Server *xferargs;
     Group_Member *target_member;
+    char *putfile_msg;
 
     if(!msg_target)
         return 0;
     msg_target += 2;
     
+    xferargs = calloc(1, sizeof(FileXferArgs_Server));
     sscanf(msg_body, "!putfile=%[^,],size=%zu,crc=%x", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum);
 
@@ -735,35 +766,36 @@ int put_new_file_to_group()
     xferargs->target_type = GROUP_TARGET; 
     current_client->file_transfers = xferargs;
 
-    //Send out a notification to the group
-    sprintf(buffer, "User \"%s\" is uploading a file \"%s\" (%zu bytes, crc: %x) to the group \"%s\"...", 
-            current_client->username, xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname);
-    printf("%s\n", buffer);
-    send_group(xferargs->target_group, buffer, strlen(buffer)+1);
-
     //Accept the file
     if(!make_folder_and_file_for_writing(GROUP_XFER_ROOT, xferargs->target_group->groupname, xferargs->filename, xferargs->target_file, &xferargs->file_fp))
         return 0;
 
-    sprintf(buffer, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+    putfile_msg = malloc(BUFSIZE);
+    sprintf(putfile_msg, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
             xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
-    
-    return send_msg(current_client, buffer, strlen(buffer)+1);
+    send_msg(current_client, putfile_msg, strlen(putfile_msg)+1);
+    free(putfile_msg);
+
+    return 1;
 }
 
 
 int get_new_file_from_group()
 {
-    FileXferArgs_Server *xferargs = calloc(1, sizeof(FileXferArgs_Server));
+    FileXferArgs_Server *xferargs;
     Group_Member *target_member;
     
     File_List *requested_file;
     unsigned int requested_fileid;
+    char *getfile_msg;
+
 
     if(!msg_target)
         return 0;
     msg_target += 2;
+
     
+    xferargs = calloc(1, sizeof(FileXferArgs_Server));
     sscanf(msg_body, "!getfile %u", &requested_fileid);
 
     //Check if group exists and user is a member
@@ -824,10 +856,14 @@ int get_new_file_from_group()
         return 0;
     }
 
-    sprintf(buffer, "!getfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-        xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
-    
-    return send_msg(current_client, buffer, strlen(buffer)+1);
+    //Provide additional information about the file to the client so it can open a transfer connection
+    getfile_msg = malloc(BUFSIZE);
+    sprintf(getfile_msg, "!getfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
+            xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_group->groupname, xferargs->token);
+    send_msg(current_client, getfile_msg, strlen(getfile_msg)+1);
+    free(getfile_msg);
+
+    return 1;
 }
 
 
@@ -887,10 +923,9 @@ static int group_recv_next_piece()
         if(!verify_received_file(xferargs->filesize, xferargs->checksum, xferargs->target_file))
             return 0;
 
-        printf("Group: %s\n", xferargs->target_group->groupname);
         add_file_to_group(xferargs->target_group, xferargs->myself->username, xferargs->filename, xferargs->filesize, xferargs->checksum, xferargs->target_file);
 
-        disconnect_client(current_client);
+        disconnect_client(current_client, NULL);
         return bytes_recvd;
     }
 

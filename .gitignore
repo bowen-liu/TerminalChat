@@ -56,3 +56,5 @@ SENDFILES/
 files_received/
 GROUP_FILES/
 test.txt
+chatserver
+chatclient

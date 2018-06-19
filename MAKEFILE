@@ -1,7 +1,7 @@
 CC=gcc
 CFLAGS= -g
 
-all : clean common.o server.o client.o main
+all : clean common.o chatserver_main chatclient_main
 
 
 #Third Party Libraries
@@ -30,6 +30,12 @@ server_commands.o: group_server.o file_transfer_server.o
 server.o: server_commands.o
 	$(CC) $(CFLAGS) -c server/server.c 
 
+#Server Main
+chatserver_main: server.o
+	$(CC) $(CFLAGS) -D SERVER_BUILD -pthread -o chatserver main.c *.o -lreadline
+	rm -f group_server.o file_transfer_server.o server_commands.o server.o
+
+
 
 #Client
 group_client.o: common.o
@@ -41,14 +47,13 @@ file_transfer_client.o: common.o
 client.o: group_client.o file_transfer_client.o
 	$(CC) $(CFLAGS) -c client/client.c
 
-
-#Main
-main: server.o client.o
-	$(CC) $(CFLAGS) -pthread -o a.out main.c *.o -lreadline
+#Client Main
+chatclient_main: client.o
+	$(CC) $(CFLAGS) -D CLIENT_BUILD -pthread -o chatclient main.c *.o -lreadline
 	rm -f *.o
 
 clean:
-	rm -f *.o a.out
+	rm -f *.o chatserver chatclient
 	rm -rf files_received
 	rm -rf GROUP_FILES
 

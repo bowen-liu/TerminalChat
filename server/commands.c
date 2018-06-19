@@ -274,12 +274,16 @@ static void admin_demote_user(char *buffer)
     send_msg(target_user->c, promote_msg, strlen(promote_msg)+1);
 }
 
+
 int handle_admin_commands(char *buffer)
 {
     char *new_msg;
     
     if(strcmp(buffer, "!shutdown") == 0)
         exit(0);
+
+    else if(strncmp(buffer, "!bcast ", 7) == 0)
+        send_bcast(&buffer[7], strlen(&buffer[7])+1);
 
     else if(strncmp(buffer, "!delgroup ", 10) == 0)
         admin_delete_group(buffer);

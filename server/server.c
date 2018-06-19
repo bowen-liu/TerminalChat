@@ -200,24 +200,15 @@ unsigned int send_long_msg(Client *c, char* buffer, size_t size)
     return retval;
 }
 
-unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client)
+unsigned int send_bcast(char* buffer, size_t size)
 {
     int count = 0;
-    char bcast_msg[BUFSIZE];
     User *curr, *temp;
-
-    if(is_control_msg)
-        sprintf(bcast_msg, "%s", buffer);
-    else
-        sprintf(bcast_msg, "%s: %s", current_client->username, buffer);
     
     //Send the message in the buffer to every active client
     HASH_ITER(hh, active_users, curr, temp)
     {
-        if(!include_current_client && curr->c->socketfd == current_client->socketfd)
-            continue;
-
-        send_msg(curr->c, bcast_msg, strlen(bcast_msg)+1);
+        send_long_msg(curr->c, buffer, strlen(buffer)+1);
         ++count;
     }
     

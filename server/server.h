@@ -9,9 +9,6 @@
 #define UNREGISTERED_CONNECTION_TIMEOUT     30
 #define CLIENT_EPOLL_DEFAULT_EVENTS         (EPOLLRDHUP | EPOLLIN)
 
-#define ADMIN_USERNAME                      ((const char*) "ADMIN")
-
-
 /*Shared Server Variables*/
 
 extern int server_socketfd;
@@ -37,8 +34,7 @@ extern int timers_epollfd;
 /*Send/recv*/
 unsigned int send_msg(Client *c, char* buffer, size_t size);
 unsigned int send_long_msg(Client *c, char* buffer, size_t size);
-unsigned int send_bcast(char* buffer, size_t size, int is_control_msg, int include_current_client);
-void send_new_long_msg(char* buffer, size_t size);
+unsigned int send_bcast(char* buffer, size_t size);
 unsigned int recv_msg(Client *c, char* buffer, size_t size);
 
 

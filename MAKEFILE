@@ -24,7 +24,10 @@ group_server.o: common.o
 file_transfer_server.o: common.o
 	$(CC) $(CFLAGS) -c server/file_transfer_server.c
 
-server.o: group_server.o file_transfer_server.o
+server_commands.o: group_server.o file_transfer_server.o
+	$(CC) $(CFLAGS) -c server/commands.c -o server_commands.o
+
+server.o: server_commands.o
 	$(CC) $(CFLAGS) -c server/server.c 
 
 

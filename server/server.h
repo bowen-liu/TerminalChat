@@ -22,10 +22,10 @@ extern char *buffer;
 extern char *msg_target;
 extern char *msg_body;
 
-
 extern Client *active_connections;                  //Hashtable of all active client sockets (key = socketfd)
 extern User *active_users;                          //Hashtable of all active users (key = username), mapped to their client descriptors
 extern Group* groups;                               //Hashtable of all user created private chatrooms (key = groupname)
+extern IP_List *banned_ips;                         //Hashtable of all banned IPs
 extern unsigned int total_users;    
 
 extern Client *current_client;                      //Descriptor for the client being serviced right now

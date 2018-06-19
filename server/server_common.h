@@ -21,6 +21,7 @@ typedef struct {
 
     /*Userinfo*/
     char username[USERNAME_LENG+1];
+    unsigned int is_admin :1;
 
     /*Pending Long Message (if any)*/
     Pending_Msg pending_msg;

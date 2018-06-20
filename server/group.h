@@ -69,6 +69,11 @@ typedef struct group {
 } Group;
 
 
+typedef struct grouplist {
+    Group *group;
+    struct grouplist *next;
+} GroupList;
+
 
 extern Group *groups;                   
 extern Group *lobby;  
@@ -83,10 +88,11 @@ int group_msg();
 void disconnect_client_group_cleanup(Client *c, char *reason);
 int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
 Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions);
+GroupList* find_from_grouplist(GroupList* list, char *groupname);
 
 int userlist_group(char *group_name);
 int create_new_group();
-int leave_group_direct(Group *group, Client *c, char *reason);
+int leave_group_direct(Group *group, Client *c, char *reason, int delete_group_joined_entry);
 int leave_group();
 int join_group();
 int invite_to_group();

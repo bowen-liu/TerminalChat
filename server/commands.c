@@ -21,7 +21,7 @@ static int userlist()
         return userlist_group(msg_target);
     }
 
-    userlist_msg = malloc(total_users * (USERNAME_LENG+1 + 128));
+    userlist_msg = malloc(total_users * (USERNAME_LENG+1) * 2);
     sprintf(userlist_msg, "!userlist=%d", total_users);
     userlist_size = strlen(userlist_msg);
 
@@ -30,7 +30,11 @@ static int userlist()
     {
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
+
+        if(curr->c->is_admin)
+            strcat(userlist_msg, " (server admin)");
     }
+
     userlist_size = strlen(userlist_msg) + 1;
     userlist_msg[userlist_size] = '\0';
     
@@ -234,9 +238,11 @@ static void admin_drop_user(char *buffer)
 
 static void admin_promote_user(char *buffer)
 {
+    User *target_user;
+    GroupList *curr, *tmp;
+    
     char target_name[USERNAME_LENG+1], *target_name_plain;
     char *promote_msg = "\n***YOU ARE NOW A SERVER ADMIN***\nPlease be responsible with your actions...\n\n";
-    User *target_user;
 
     sscanf(buffer, "!promoteadmin %s", target_name);
     target_name_plain = plain_name(target_name);

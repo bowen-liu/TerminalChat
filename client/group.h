@@ -13,7 +13,6 @@ typedef struct {
 
 /*Handle Server Control Messages*/
 void group_invited();
-void group_joined();
 void group_kicked();
 void group_banned();
 void user_left_group();

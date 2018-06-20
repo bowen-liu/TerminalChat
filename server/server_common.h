@@ -3,8 +3,7 @@
 
 #include "../common/common.h"  
    
-
-struct namelist;
+struct group_list;
 struct filexferargs_server;
 struct timerevent;
 
@@ -27,7 +26,7 @@ typedef struct {
     Pending_Msg pending_msg;
 
     /*Descriptors for other server components*/
-    struct namelist *groups_joined;
+    struct grouplist *groups_joined;
     struct filexferargs_server *file_transfers;
     struct timerevent *idle_timer;
 
@@ -53,6 +52,7 @@ typedef struct timerevent{
 
     UT_hash_handle hh;
 } TimerEvent;
+
 
 
 User* get_current_client_user();

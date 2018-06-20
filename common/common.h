@@ -50,12 +50,6 @@
 enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
 
 
-typedef struct namelist {
-    char name[USERNAME_LENG+1];
-    struct namelist *next;
-} Namelist;
-
-
 typedef struct {
     uint32_t ipaddr;            //copy from sockaddr_in->sin_addr->s_addr
     UT_hash_handle hh;
@@ -69,7 +63,6 @@ void remove_newline(char *str);
 int register_fd_with_epoll(int epoll_fd, int socketfd, int event_flags);
 int update_epoll_events(int epoll_fd, int socketfd, int event_flags);
 int name_is_valid(char* username);
-Namelist* find_from_namelist(Namelist* list, char *name);
 
 int path_is_file(const char *path);
 int create_timerfd(int period_sec, int is_periodic, int epoll_fd);

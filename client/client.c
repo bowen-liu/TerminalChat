@@ -132,8 +132,8 @@ static int register_with_server()
         return 0;
     
     //Parse the returned userlist
-    if(strncmp(buffer, "!groupjoined=", 10) == 0)
-        group_joined();
+    if(strncmp(buffer, "!joined=", 8) == 0)
+        user_joined_group();
     else
         goto register_with_server_failed;
 
@@ -250,22 +250,19 @@ static void parse_control_message(char* cmd_buffer)
 
     /*Group operations. Implemented in group.c*/
 
-    else if(strncmp("!groupinvite=", buffer, 13) == 0)
+    else if(strncmp("!invite=", buffer, 8) == 0)
         group_invited();
 
-    else if(strncmp("!groupjoined=", buffer, 13) == 0)
-        group_joined();
-
-    else if(strncmp("!leftgroup=", buffer, 11) == 0)
+    else if(strncmp("!left=", buffer, 6) == 0)
         user_left_group();
 
-    else if(strncmp("!joinedgroup=", buffer, 13) == 0)
+    else if(strncmp("!joined=", buffer, 8) == 0)
         user_joined_group();
 
-    else if(strncmp("!groupkicked=", buffer, 13) == 0)
+    else if(strncmp("!kicked=", buffer, 8) == 0)
         group_kicked();
 
-    else if(strncmp("!groupbanned=", buffer, 13) == 0)
+    else if(strncmp("!banned=", buffer, 8) == 0)
         group_banned();
 
     /*File Transfer operations. Implemented in file_transfer_client.c*/

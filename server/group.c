@@ -12,17 +12,23 @@ char *bcast_buffer;                                 //buffer used to broadcast m
 /*      Initialization        */
 /******************************/
 
-void create_lobby_group()
+static Group* create_new_group_direct(char *groupname, int skip_name_check);
+int create_lobby_group()
 {
-    groups = NULL;
-    lobby = calloc(1, sizeof(Group));
+    groups = NULL;    
     bcast_buffer = malloc(BUFSIZE);
+    lobby = create_new_group_direct(LOBBY_GROUP_NAME, 1);
 
-    strcpy(lobby->groupname, LOBBY_GROUP_NAME);
+    if(!lobby)
+    {
+        printf("Failed to create the lobby group.\n");
+        return 0;
+    }
+
     lobby->default_user_permissions = LOBBY_USER_PERM;
     lobby->group_flags = LOBBY_FLAGS;
 
-    HASH_ADD_STR(groups, groupname, lobby);
+    return 1;
 }
 
 
@@ -112,21 +118,6 @@ int group_msg()
 /*      Group Helpers    */
 /******************************/
 
-GroupList* find_from_grouplist(GroupList* list, char *groupname)
-{
-    GroupList *curr, *tmp;
-
-    LL_FOREACH_SAFE(list, curr, tmp)
-    {
-        if(strcmp(curr->group->groupname, groupname) == 0)
-            break;
-        else
-            curr = NULL;
-    }
-
-    return curr;
-}
-
 Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions)
 {
     Group_Member *newmember;
@@ -152,7 +143,7 @@ Group_Member* allocate_group_member(Group *group, Client *target_user, int permi
 }
 
 
-static void remove_group(Group *group)
+void remove_group(Group *group)
 {
     unsigned int mcount = HASH_COUNT(group->members), removed_members = 0, removed_invites = 0;
     char *leave_msg;
@@ -279,12 +270,27 @@ int basic_group_permission_check(char *group_name, Group **group_ret, Group_Memb
     return 1;
 }
 
+GroupList* find_from_grouplist(GroupList* list, char *groupname)
+{
+    GroupList *curr, *tmp;
+
+    LL_FOREACH_SAFE(list, curr, tmp)
+    {
+        if(strcmp(curr->group->groupname, groupname) == 0)
+            break;
+        else
+            curr = NULL;
+    }
+
+    return curr;
+}
+
 
 /******************************/
 /*      Group Operations    */
 /******************************/
 
-int userlist_group(char *group_name)
+static int userlist_group(char *group_name)
 {
     char* userlist_msg;
     size_t userlist_size = 0;
@@ -326,6 +332,70 @@ int userlist_group(char *group_name)
     return mcount;
 }
 
+int userlist()
+{
+    char* userlist_msg;
+    size_t userlist_size = 0;
+    User *curr, *temp;
+
+    //Is the user requesting a userlist of a group, or a userlist of everyone online?
+    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
+    {
+        msg_target += 2;
+        return userlist_group(msg_target);
+    }
+
+    userlist_msg = malloc(total_users * (USERNAME_LENG+1) * 2);
+    sprintf(userlist_msg, "!userlist=%d", total_users);
+    userlist_size = strlen(userlist_msg);
+
+    //Iterate through the list of active usernames and append them to the buffer one at a time
+    HASH_ITER(hh, active_users, curr, temp)
+    {
+        strcat(userlist_msg, ",");
+        strcat(userlist_msg, curr->username);
+
+        if(curr->c->is_admin)
+            strcat(userlist_msg, " (server admin)");
+    }
+
+    userlist_size = strlen(userlist_msg) + 1;
+    userlist_msg[userlist_size] = '\0';
+    
+    send_long_msg(current_client, userlist_msg, userlist_size);
+    free(userlist_msg);
+
+    return total_users;
+}
+
+static Group* create_new_group_direct(char *groupname, int skip_name_check)
+{
+    Group* newgroup;
+
+    //Strip any leading '@' from the proposed name, if any
+    while(groupname[0] == '@')
+        ++groupname;
+
+    //Ensure the groupname is valid and does not already exist
+    if(!skip_name_check && (!groupname || !name_is_valid(groupname)))
+        return NULL;
+
+    HASH_FIND_STR(groups, groupname, newgroup);
+    if(newgroup)
+    {
+        printf("Group \"%s\" already exists.\n", groupname);
+        return NULL;
+    }
+
+    //Register the group
+    newgroup = calloc(1, sizeof(Group));
+    strcpy(newgroup->groupname, groupname);
+    newgroup->default_user_permissions = GRP_PERM_DEFAULT;
+    newgroup->group_flags = GRP_FLAG_DEFAULT;
+    HASH_ADD_STR(groups, groupname, newgroup);
+
+    return newgroup;
+}
 
 static int invite_to_group_direct(Group *group, User *user);
 int create_new_group()
@@ -339,31 +409,12 @@ int create_new_group()
     token = strtok(buffer, " ");                                //Skip the header token "!newgroup"
     token = strtok(NULL, " ");                                  //Name of the group to be created
 
-    //Strip any leading '@' from the proposed name, if any
-    while(token[0] == '@')
-        ++token;
-
-    //Ensure the groupname is valid and does not already exist
-    if(!token || !name_is_valid(token))
+    newgroup = create_new_group_direct(token, 0);
+    if(!newgroup)
     {
-        send_msg(current_client, "InvalidGroupName", 17);
+        send_msg(current_client, "InvalidName", 12);
         return 0;
     }
-
-    HASH_FIND_STR(groups, token, newgroup);
-    if(newgroup)
-    {
-        printf("Group \"%s\" already exists.\n", token);
-        send_msg(current_client, "InvalidGroupName", 17);
-        return 0;
-    }
-
-    //Register the group
-    newgroup = calloc(1, sizeof(Group));
-    strcpy(newgroup->groupname, token);
-    newgroup->default_user_permissions = GRP_PERM_DEFAULT;
-    newgroup->group_flags = GRP_FLAG_DEFAULT;
-    HASH_ADD_STR(groups, groupname, newgroup);
 
     //Invite each of the clients to join the group
     token = current_client->username;
@@ -1071,19 +1122,17 @@ int set_group_permission()
             group->group_flags |= GRP_FLAG_INVITE_ONLY;
         else if(strcmp(token, "UNSET_INVITE_ONLY") == 0)
             group->group_flags &= ~GRP_FLAG_INVITE_ONLY;
+
         else if(strcmp(token, "SET_TRANSFER_ALLOWED") == 0)
             group->group_flags |= GRP_FLAG_ALLOW_XFER;
         else if(strcmp(token, "UNSET_TRANSFER_ALLOWED") == 0)
             group->group_flags &= ~GRP_FLAG_ALLOW_XFER;
 
         //Commands only available for SERVER ADMINS
-        else if(current_client->is_admin)
-        {
-            if(strcmp(token, "SET_PERSISTENT") == 0)
-                group->group_flags |= GRP_FLAG_PERSISTENT; 
-            else if(strcmp(token, "UNSET_PERSISTENT") == 0)
-                group->group_flags &= ~GRP_FLAG_PERSISTENT;
-        }
+        else if(strcmp(token, "SET_PERSISTENT") == 0 && current_client->is_admin)
+            group->group_flags |= GRP_FLAG_PERSISTENT; 
+        else if(strcmp(token, "UNSET_PERSISTENT") == 0 && current_client->is_admin)
+            group->group_flags &= ~GRP_FLAG_PERSISTENT;
 
         else
         {
@@ -1233,27 +1282,4 @@ int remove_file_from_group()
     free(requested_file);
 
     return 1;
-}
-
-
-/******************************/
-/*   Server Admin Operations  */
-/******************************/
-
-void admin_delete_group(char *buffer)
-{
-    char groupname[USERNAME_LENG+1], *groupname_plain;
-    Group *group;
-
-    sscanf(buffer, "!delgroup %s", groupname);
-    groupname_plain = plain_name(groupname);
-
-    HASH_FIND_STR(groups, groupname_plain, group);
-    if(!group)
-    {
-        printf("Group \"%s\" was not found.\n", groupname_plain);
-        return;
-    }
-
-    remove_group(group);
 }

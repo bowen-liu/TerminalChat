@@ -80,7 +80,7 @@ extern Group *lobby;
 
 
 
-void create_lobby_group();
+int create_lobby_group();
 
 unsigned int send_lobby(Client *c, char* buffer, size_t size);
 unsigned int send_group(Group* group, char* buffer, size_t size);
@@ -89,8 +89,9 @@ void disconnect_client_group_cleanup(Client *c, char *reason);
 int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
 Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions);
 GroupList* find_from_grouplist(GroupList* list, char *groupname);
+void remove_group(Group *group);
 
-int userlist_group(char *group_name);
+int userlist();
 int create_new_group();
 int leave_group_direct(Group *group, Client *c, char *reason, int delete_group_joined_entry);
 int leave_group();
@@ -105,7 +106,5 @@ int set_group_permission();
 int group_filelist();
 int add_file_to_group(Group *group, char *uploader, char *filename, size_t filesize, unsigned int checksum, char *target_file);
 int remove_file_from_group();
-
-void admin_delete_group(char *buffer);
 
 #endif

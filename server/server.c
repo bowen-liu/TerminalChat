@@ -753,7 +753,8 @@ void server(const char* hostname, const unsigned int port)
         return;   
 
     /*Initialize other server components before listening for connections*/
-    create_lobby_group();
+    if(!create_lobby_group())
+        return;
 
     /*Begin listening for incoming connections on the server socket*/
     if(listen(server_socketfd, MAX_CONNECTION_BACKLOG) < 0)

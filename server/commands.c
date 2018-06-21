@@ -8,42 +8,6 @@
 /*      Client Operations     */
 /******************************/
 
-static int userlist()
-{
-    char* userlist_msg;
-    size_t userlist_size = 0;
-    User *curr, *temp;
-
-    //Is the user requesting a userlist of a group, or a userlist of everyone online?
-    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
-    {
-        msg_target += 2;
-        return userlist_group(msg_target);
-    }
-
-    userlist_msg = malloc(total_users * (USERNAME_LENG+1) * 2);
-    sprintf(userlist_msg, "!userlist=%d", total_users);
-    userlist_size = strlen(userlist_msg);
-
-    //Iterate through the list of active usernames and append them to the buffer one at a time
-    HASH_ITER(hh, active_users, curr, temp)
-    {
-        strcat(userlist_msg, ",");
-        strcat(userlist_msg, curr->username);
-
-        if(curr->c->is_admin)
-            strcat(userlist_msg, " (server admin)");
-    }
-
-    userlist_size = strlen(userlist_msg) + 1;
-    userlist_msg[userlist_size] = '\0';
-    
-    send_long_msg(current_client, userlist_msg, userlist_size);
-    free(userlist_msg);
-
-    return total_users;
-}
-
 int parse_client_command()
 {
     /*Connection related commands*/
@@ -130,6 +94,25 @@ int parse_client_command()
 /******************************/
 /*   Server Admin Operations  */
 /******************************/
+
+static void admin_delete_group(char *buffer)
+{
+    char groupname[USERNAME_LENG+1], *groupname_plain;
+    Group *group;
+
+    sscanf(buffer, "!delgroup %s", groupname);
+    groupname_plain = plain_name(groupname);
+
+    HASH_FIND_STR(groups, groupname_plain, group);
+    if(!group)
+    {
+        printf("Group \"%s\" was not found.\n", groupname_plain);
+        return;
+    }
+
+    remove_group(group);
+}
+
 
 static void admin_unban_user(char *buffer)
 {
@@ -244,7 +227,7 @@ static void admin_promote_user(char *buffer)
     char target_name[USERNAME_LENG+1], *target_name_plain;
     char *promote_msg = "\n***YOU ARE NOW A SERVER ADMIN***\nPlease be responsible with your actions...\n\n";
 
-    sscanf(buffer, "!promoteadmin %s", target_name);
+    sscanf(buffer, "!promoteuser %s", target_name);
     target_name_plain = plain_name(target_name);
 
     HASH_FIND_STR(active_users, target_name_plain, target_user);
@@ -265,7 +248,7 @@ static void admin_demote_user(char *buffer)
     char *promote_msg = "\n***YOU HAVE BEEN DEMOTED TO A REGULAR USER***\n\n";
     User *target_user;
 
-    sscanf(buffer, "!demoteadmin %s", target_name);
+    sscanf(buffer, "!demoteuser %s", target_name);
     target_name_plain = plain_name(target_name);
 
     HASH_FIND_STR(active_users, target_name_plain, target_user);
@@ -311,6 +294,12 @@ int handle_admin_commands(char *buffer)
 
     else
     {
+        if(buffer[0] == '!')
+        {
+            printf("Invalid admin command.\n");
+            return 0;
+        }
+
         new_msg = malloc(BUFSIZE);
         sprintf(new_msg, "***admin*** (%s): %s", lobby->groupname, buffer);
         printf("%s\n", new_msg);

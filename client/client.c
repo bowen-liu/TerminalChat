@@ -59,7 +59,12 @@ static inline unsigned int transfer_next_client()
 
 inline int send_msg_client(char* buffer, size_t size)
 {
-    int retval = send_msg_common(my_socketfd, buffer, size, &pending_msg);
+    int retval;
+
+    if(size > MAX_MSG_LENG)
+        size = MAX_MSG_LENG;
+    
+    retval = send_msg_common(my_socketfd, buffer, size, &pending_msg);
 
     if(retval < 0)
         exit(retval);

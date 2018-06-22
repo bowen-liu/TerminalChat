@@ -1,5 +1,7 @@
 #include "sendrecv.h"
 
+#define SENDRECV_HEADER_SIZE (2 + sizeof(uint16_t))
+
 
 /****************************/
 /*          COMMON          */
@@ -90,12 +92,14 @@ static int send_msg_common_internal(int socket, char* buffer, size_t size, Pendi
         return 0;
     } 
 
-    total_size = sizeof(uint16_t) + size;
+    total_size = SENDRECV_HEADER_SIZE + size;
 
     //Create a new headered message for sending
     headered_buf = malloc(total_size);
-    memcpy(&headered_buf[0], &(uint16_t){htons(size)}, sizeof(uint16_t));
-    memcpy(&headered_buf[sizeof(uint16_t)], buffer, size);
+    headered_buf[0] = 0x1;                                                      //'SOH'
+    *((uint16_t*)&headered_buf[1]) = htons(size);                                   //Message Size      
+    headered_buf[1+sizeof(uint16_t)] = 0x2;                                     //'STX'
+    memcpy(&headered_buf[SENDRECV_HEADER_SIZE], buffer, size);                  //Text
     
     if(headered_buf[total_size-1] != '\0')
         headered_buf[total_size-1] = '\0';
@@ -159,26 +163,9 @@ int recv_direct(int socketfd, char* buffer, size_t size)
     return recv(socketfd, buffer, size, 0);
 }
 
-int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
+static int recv_msg_internal(int socket, char* buffer, size_t expected_length, Pending_Msg *p)
 {
     int bytes;
-    uint16_t expected_length;
-
-    //Only send a new message if there's no pending operation? We can also consider some kind of queueing...
-    if(p->pending_op != NO_XFER_OP)
-    {
-        printf("Target has a pending %s operation. Skipping receiving new message...\n", (p->pending_op == SENDING_OP)? "SEND":"RECV");
-        return 0;
-    }
-    
-    //First read the length of the expected message
-    bytes = recv(socket, &expected_length, sizeof(uint16_t), 0);
-    if(bytes <= 0)
-    {
-        perror("Failed to read message size from socket!");
-        return 0;
-    }
-    expected_length = ntohs(expected_length);
 
     //Receive the remainder of the messages    
     bytes = recv(socket, buffer, expected_length, 0);
@@ -199,7 +186,7 @@ int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
     //Incomplete receive
     if(bytes < expected_length)
     {
-        printf("Queued pending recv! Expected %u Received %u\n", expected_length, bytes);
+        printf("Queued pending recv! Expected %zu Received %u\n", expected_length, bytes);
         
         p->pending_op = RECVING_OP;
         p->pending_size = expected_length;
@@ -212,3 +199,37 @@ int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
 
     return bytes;
 }
+
+int recv_msg_common(int socket, char* buffer, size_t size, Pending_Msg *p)
+{
+    int bytes;
+    char header[SENDRECV_HEADER_SIZE+1];
+    uint16_t expected_length = 0;
+
+    //Only send a new message if there's no pending operation? We can also consider some kind of queueing...
+    if(p->pending_op != NO_XFER_OP)
+    {
+        printf("Target has a pending %s operation. Skipping receiving new message...\n", (p->pending_op == SENDING_OP)? "SEND":"RECV");
+        return 0;
+    }
+    
+    //First read the header of the expected message
+    bytes = recv(socket, &header, SENDRECV_HEADER_SIZE, 0);
+    if(bytes <= 0)
+    {
+        perror("Failed to read message header from socket!");
+        return 0;
+    }
+
+    //Validate header format and read the expected message length
+    if(header[0] == 0x1 && header[SENDRECV_HEADER_SIZE-1] == 0x2)
+        expected_length = ntohs(*((uint16_t*)&header[1]));
+    else
+        return 0;
+
+    if(expected_length > size)
+        expected_length = size;
+
+    return recv_msg_internal(socket, buffer, expected_length, p);
+}
+

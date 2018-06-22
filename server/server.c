@@ -279,9 +279,7 @@ static int register_client_connection()
     User *registered_user;
 
     int duplicates = 0, max_duplicates_allowed;
-    char *reg_msg;
-
-    char error_msg[MAX_MSG_LENG+1];
+    char reg_msg[MAX_MSG_LENG+1];
 
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
@@ -351,10 +349,8 @@ static int register_client_connection()
     strcpy(current_client->username, username);
 
     //Reply to the new user with its new requested username
-    reg_msg = malloc(BUFSIZE);
     sprintf(reg_msg, "!regid=%s", current_client->username);
     send_direct(current_client->socketfd, reg_msg, strlen(reg_msg)+1);
-    free(reg_msg);
     
     printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
     
@@ -468,7 +464,7 @@ static int handle_client_msg(int use_pending_msg)
     //The client/server will not deal with partial send/recvs during this stage.
     else if(current_client->connection_type == UNREGISTERED_CONNECTION)
     {
-        bytes = recv_direct(current_client->socketfd, buffer, BUFSIZE);
+        bytes = recv_direct(current_client->socketfd, buffer, MAX_MSG_LENG+1);
         
         if(!bytes)
             return 0;
@@ -507,7 +503,7 @@ static int handle_client_msg(int use_pending_msg)
     }
     else
     {
-        bytes = recv_msg(current_client, buffer, BUFSIZE);
+        bytes = recv_msg(current_client, buffer, MAX_MSG_LENG+1);
         if(!bytes)
             return 0;
         

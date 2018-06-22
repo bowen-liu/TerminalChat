@@ -82,10 +82,9 @@ inline int recv_msg_client(char* buffer, size_t size)
 
 
 /******************************/
-/*   Client-side Operations   */
+/*  Registration with Server  */
 /******************************/
 
-static void parse_userlist();
 static int register_with_server()
 {   
     /*This function is called right after a connection to the server is made, and before the connection is registered to epoll. 
@@ -99,7 +98,7 @@ static int register_with_server()
 
     //Register my desired username
     printf("Registering username \"%s\"...\n", my_username);
-    sprintf(buffer, "!register:username=%s", my_username);
+    sprintf(buffer, "!regid=%s", my_username);
     if(send_direct(my_socketfd, buffer, strlen(buffer)+1) <= 0)
         return 0;
 
@@ -107,10 +106,10 @@ static int register_with_server()
     if(recv_direct(my_socketfd, buffer, BUFSIZE) <= 0)
         return 0;
 
-    //Did we receive an anticipated !regreply?
-    if(strncmp(buffer, "!regreply:username=", 19) == 0)
+    //Did we receive an anticipated registration reply?
+    if(strncmp(buffer, "!regid=", 7) == 0)
     {
-        sscanf(&buffer[19], "%s", my_username);
+        sscanf(&buffer[7], "%s", my_username);
         printf("Registered with server as \"%s\"\n", my_username);
     }
     else
@@ -154,148 +153,15 @@ static int register_with_server()
 register_with_server_failed:
 
     //Something went wrong and server doesn't want me to join :(
-    printf("Server rejected registration: \"%s\"\n", buffer);
+    printf("Unexpected reply from registration.\n");
+
+    if(strncmp("!err=", buffer, 5) == 0)
+        parse_error_code();
+    else
+        printf("\"%s\"\n", buffer);
+    
     return 0;
 }
-
-
-
-static int handle_user_command()
-{
-    //Return 0 if you don't want the command to be forwarded
-
-    if(strcmp(msg_body, "!close") == 0)
-    {
-        printf("Closing connection!\n");
-        exit(0);
-    }
-
-    /*Group operations. Implemented in group.c*/
-
-    else if(strncmp(msg_body, "!leave ", 12) == 0)
-        return leaving_group();
-
-    /*File Transfer operations. Implemented in file_transfer_client.c*/
-
-    else if(strncmp("!sendfile ", msg_body, 10) == 0)
-        return outgoing_file();
-    
-    else if(strcmp("!acceptfile", msg_body) == 0)
-        return accept_incoming_file();
-
-    else if(strcmp("!rejectfile", msg_body) == 0)
-        return reject_incoming_file();
-
-    else if(strcmp("!cancelfile", msg_body) == 0)
-        return cancel_ongoing_file_transfer();
-
-    else if(strncmp("!putfile ", msg_body, 9) == 0)   
-        return outgoing_file_group();
-
-    return 1;
-}
-
-
-
-/******************************/
-/*  Server Control Messages   */
-/******************************/
-
-static void parse_userlist()
-{
-    char group_name[USERNAME_LENG+1];
-    char* newbuffer = buffer;
-    char* token;
-    unsigned int users_online;
-
-    //Parse the header
-    token = strtok(newbuffer, ",");
-    if(!token)
-        return;
-    sscanf(token, "!userlist=%u", &users_online);
-
-    //Is the following token the name of a group?
-    token = strtok(NULL, ",");
-    if(!token)
-        return;
-
-    //This is a group userlist
-    if(strncmp(token, "group=", 6) == 0)
-    {
-        sscanf(token, "group=%[^,]", group_name);
-        printf("%u user(s) are currently online in the group \"%s\":\n", users_online, group_name);
-        token = strtok(NULL, ",");
-    }
-
-    //This is a global userlist
-    else
-        printf("%u users are currently online:\n", users_online);
-
-    //Extract each subsequent user's name
-    while(token)
-    {
-        printf("%s\n", token);
-        token = strtok(NULL, ",");
-    }
-}
-
-
-static void parse_control_message(char* cmd_buffer)
-{
-    char *old_buffer = buffer;
-    buffer = cmd_buffer;
-    
-    if(strncmp("!userlist=", buffer, 10) == 0)
-        parse_userlist();
-
-    /*Group operations. Implemented in group.c*/
-
-    else if(strncmp("!invite=", buffer, 8) == 0)
-        group_invited();
-
-    else if(strncmp("!left=", buffer, 6) == 0)
-        user_left_group();
-
-    else if(strncmp("!joined=", buffer, 8) == 0)
-        user_joined_group();
-
-    else if(strncmp("!kicked=", buffer, 8) == 0)
-        group_kicked();
-
-    else if(strncmp("!banned=", buffer, 8) == 0)
-        group_banned();
-
-    /*File Transfer operations. Implemented in file_transfer_client.c*/
-
-    else if(strncmp("!sendfile=", buffer, 10) == 0)
-        incoming_file();
-
-    else if(strncmp("!acceptfile=", buffer, 12) == 0)
-        recver_accepted_file();
-
-    else if(strncmp("!rejectfile=", buffer, 12) == 0)
-        rejected_file_sending();
-    
-    else if(strncmp("!cancelfile=", buffer, 12) == 0)
-        file_transfer_cancelled();
-
-    else if(strncmp("!filelist=", buffer, 10) == 0)
-        parse_filelist();
-
-    else if(strncmp("!putfile=", buffer, 9) == 0)
-        new_group_file_ready();
-
-    else if(strncmp("!getfile=", buffer, 9) == 0)
-        incoming_group_file();
-    
-
-
-    else
-        printf("Received invalid control message \"%s\"\n", buffer);
-
-    buffer = old_buffer;
-}
-
 
 
 /******************************/

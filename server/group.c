@@ -85,7 +85,7 @@ int group_msg()
     if(!target)
     {
         printf("Group \"%s\" not found\n", msg_target);
-        send_msg(current_client, "InvalidGroup", 13);
+        send_error_code(current_client, ERR_GROUP_NOT_FOUND, msg_target);
         return 0;
     }
 
@@ -94,13 +94,13 @@ int group_msg()
     if(!sending_member)
     {
         printf("User \"%s\" is not a member of \"%s\"\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
     else if((sending_member->permissions & (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK)) != (GRP_PERM_HAS_JOINED | GRP_PERM_CAN_TALK))
     {
         printf("User \"%s\" do not have permission to message group \"%s\"\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -242,13 +242,14 @@ int basic_group_permission_check(char *group_name, Group **group_ret, Group_Memb
 {
     Group *group;
     Group_Member *member;
+    char *groupname_plain = plain_name(group_name);
 
     //Check if this group exists
-    HASH_FIND_STR(groups, group_name, group);
+    HASH_FIND_STR(groups, groupname_plain, group);
     if(!group)
     {
-        printf("Group \"%s\" not found\n", group_name);
-        send_msg(current_client, "InvalidGroup", 13);
+        printf("Group \"%s\" not found\n", groupname_plain);
+        send_error_code(current_client, ERR_GROUP_NOT_FOUND, groupname_plain);
         return 0;
     }
 
@@ -259,8 +260,8 @@ int basic_group_permission_check(char *group_name, Group **group_ret, Group_Memb
     HASH_FIND_STR(group->members, current_client->username, member);
     if(!member)
     {
-        printf("User \"%s\" is not a member of the group \"%s\".\n", current_client->username, group_name);
-        send_msg(current_client, "NoPermission", 13);
+        printf("User \"%s\" is not a member of the group \"%s\".\n", current_client->username, groupname_plain);
+        send_error_code(current_client, ERR_NO_PERMISSION, groupname_plain);
         return 0;
     }
 
@@ -412,7 +413,7 @@ int create_new_group()
     newgroup = create_new_group_direct(token, 0);
     if(!newgroup)
     {
-        send_msg(current_client, "InvalidName", 12);
+        send_error_code(current_client, ERR_INVALID_NAME, token);
         return 0;
     }
 
@@ -521,7 +522,7 @@ int leave_group()
     if(!group)
     {
         printf("Group \"%s\" was not found.\n", groupname_plain);
-        send_msg(current_client, "InvalidGroup", 13);
+        send_error_code(current_client, ERR_GROUP_NOT_FOUND, groupname_plain);
         return 0;
     }
 
@@ -548,7 +549,7 @@ int join_group()
     if(!group)
     {
         printf("Group \"%s\" was not found.\n", groupname_plain);
-        send_msg(current_client, "InvalidGroup", 13);
+        send_error_code(current_client, ERR_GROUP_NOT_FOUND, groupname_plain);
         return 0;
     }
 
@@ -562,7 +563,7 @@ int join_group()
         if(newmember->permissions & GRP_PERM_HAS_JOINED)
         {
             printf("User \"%s\" is already a member of the group \"%s\". Permission: %d\n", current_client->username, group->groupname, newmember->permissions);
-            send_msg(current_client, "AlreadyExist", 13);
+            send_error_code(current_client, ERR_ALREADY_JOINED, current_client->username);
             return 0;
         }
 
@@ -570,7 +571,7 @@ int join_group()
         if(ban_record)
         {
             printf("User \"%s\" wanted to join group \"%s\", but it has been IP banned.\n", current_client->username, group->groupname);
-            send_msg(current_client, "IPBanned", 9);
+            send_error_code(current_client, ERR_IP_BANNED, group->groupname);
             leave_group_direct(group, current_client, "Banned", 1);
             return 0;
         }
@@ -597,7 +598,7 @@ int join_group()
             if(ban_record)
             {
                 printf("User \"%s\" wanted to join group \"%s\", but it has been IP banned.\n", current_client->username, group->groupname);
-                send_msg(current_client, "IPBanned", 9);
+                send_error_code(current_client, ERR_IP_BANNED, group->groupname);
                 return 0;
             }
             
@@ -632,7 +633,7 @@ static int invite_to_group_direct(Group *group, User *user)
     if(already_in_group && (already_in_group->permissions & GRP_PERM_HAS_JOINED))
     {
         printf("User \"%s\" is already a member of the group \"%s\".\n", user->username, group->groupname);
-        send_msg(current_client, "AlreadyExist", 13);
+        send_error_code(current_client, ERR_ALREADY_JOINED, user->username);
         return 0;
     }
 
@@ -671,7 +672,7 @@ int invite_to_group()
     if(!(requesting_member->permissions & GRP_PERM_CAN_INVITE))
     {
         printf("User \"%s\" tried to invite users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -686,7 +687,7 @@ int invite_to_group()
         if(!target_user)
         {
             printf("User \"%s\" was not found.\n", token);
-            send_msg(current_client, "UserNotFound", 13);
+            send_error_code(current_client, ERR_USER_NOT_FOUND, token);
             
             token = strtok(NULL, " ");
             continue;
@@ -725,7 +726,7 @@ static int kick_ban_from_group(int ban_users)
     if(!(target_member->permissions & GRP_PERM_CAN_KICK))
     {
         printf("User \"%s\" tried to kick users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -741,7 +742,7 @@ static int kick_ban_from_group(int ban_users)
         if(!target_member)
         {
             printf("User \"%s\" was not found.\n", token);
-            send_msg(current_client, "UserNotFound", 13);
+            send_error_code(current_client, ERR_USER_NOT_FOUND, token);
             
             token = strtok(NULL, " ");
             continue;
@@ -818,7 +819,7 @@ int unban_from_group()
     if(!(calling_member->permissions & GRP_PERM_CAN_KICK))
     {
         printf("User \"%s\" tried to ban users from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -841,7 +842,7 @@ int unban_from_group()
         else
         {
             printf("Target \"%s\" was not found or not banned.\n", token);
-            send_msg(current_client, "UserNotFound", 13);
+            send_error_code(current_client, ERR_USER_NOT_FOUND, token);
             token = strtok(NULL, " ");
             continue;
         }
@@ -867,7 +868,7 @@ int unban_from_group()
         else
         {
             printf("Target \"%s\" was not found or not banned.\n", token);
-            send_msg(current_client, "UserNotFound", 13);
+            send_error_code(current_client, ERR_USER_NOT_FOUND, token);
         }
 
         token = strtok(NULL, " ");
@@ -922,7 +923,7 @@ int set_member_permission()
     if(!(target_member->permissions & GRP_PERM_CAN_SETPERM))
     {
         printf("User \"%s\" tried to change user permissions from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -934,7 +935,7 @@ int set_member_permission()
     if(!token)
     {
         printf("No user specified.\n");
-        send_msg(current_client, "UserNotFound", 13);
+        send_error_code(current_client, ERR_USER_NOT_FOUND, NULL);
         return 0;
     }
 
@@ -957,7 +958,7 @@ int set_member_permission()
         if(!target_member)
         {
             printf("User \"%s\" was not found.\n", token);
-            send_msg(current_client, "UserNotFound", 13);
+            send_error_code(current_client, ERR_USER_NOT_FOUND, token);
             return 0;
         }
 
@@ -1044,7 +1045,7 @@ int set_member_permission()
         else
         {
             printf("Unknown operation \"%s\"\n", token);
-            send_msg(current_client, "UnknownOP", 10);
+            send_error_code(current_client, ERR_INVALID_CMD, token);
             token = strtok(NULL, " ");
             continue;
         }
@@ -1101,7 +1102,7 @@ int set_group_permission()
     if(!(target_member->permissions & GRP_PERM_CAN_SETPERM))
     {
         printf("User \"%s\" tried to change user permissions from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -1109,7 +1110,7 @@ int set_group_permission()
     if(strcmp(group->groupname, LOBBY_GROUP_NAME) == 0)
     {
         printf("User \"%s\" tried to change group flags for lobby.\n", current_client->username);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -1137,7 +1138,7 @@ int set_group_permission()
         else
         {
             printf("Unknown operation \"%s\"\n", token);
-            send_msg(current_client, "UnknownOP", 10);
+            send_error_code(current_client, ERR_INVALID_CMD, token);
             token = strtok(NULL, " ");
             continue;
         }
@@ -1184,7 +1185,7 @@ int group_filelist()
     if( !(group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
     {
         printf("User \"%s\" is not permitted to list files from group \"%s\"\n", target_member->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
 
@@ -1256,16 +1257,16 @@ int remove_file_from_group()
     if(!requested_file)
     {
         printf("Could not find a file associated with fileid %u in group \"%s\"\n", fileid, group->groupname);
-        send_msg(current_client, "WrongInfo", 10);
+        send_error_code(current_client, ERR_INCORRECT_INFO, NULL);
         return 0;
     }
 
     //Only admins, or original file uploader can delete the file
     if(strcmp(target_member->username, requested_file->uploader) != 0 && 
-        !(target_member->permissions & GRP_PERM_ADMIN_CHECK))
+        !(target_member->permissions & GRP_PERM_CAN_KICK))
     {
-        printf("User \"%s\" wants to delete file %u in group \"%s\", but isn't admin and doesn't own the file.\n", target_member->username, fileid, group->groupname);
-        send_msg(current_client, "NoPermission", 13);
+        printf("User \"%s\" wants to delete file %u in group \"%s\", but doesn't own the file (and isn't admin).\n", target_member->username, fileid, group->groupname);
+        send_error_code(current_client, ERR_NO_PERMISSION, group->groupname);
         return 0;
     }
 

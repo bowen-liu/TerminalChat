@@ -49,6 +49,10 @@
 
 enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
 
+enum error_codes   {ERR_NONE = 0, ERR_INVALID_CMD, ERR_INVALID_NAME, ERR_USER_NOT_FOUND, 
+                    ERR_GROUP_NOT_FOUND, ERR_NO_PERMISSION, ERR_ALREADY_JOINED, ERR_IP_BANNED,
+                    ERR_INCORRECT_INFO, ERR_NO_XFER_FOUND};
+
 
 typedef struct {
     uint32_t ipaddr;            //copy from sockaddr_in->sin_addr->s_addr

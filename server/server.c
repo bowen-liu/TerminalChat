@@ -229,6 +229,42 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
     return retval;
 }
 
+static inline void send_error_code_helper(char *errmsg, enum error_codes err, char *additional_info)
+{
+    unsigned int remaining_len;
+
+    sprintf(errmsg, "!err=%u", (unsigned int)err);
+
+    if(additional_info && strlen(additional_info) > 0)
+    {
+        remaining_len = MAX_MSG_LENG - strlen(errmsg);
+        sprintf(&errmsg[strlen(errmsg)], ",%.*s", remaining_len, additional_info);
+    }
+}
+
+static void send_error_code_direct(int socketfd, enum error_codes err, char *additional_info)
+{
+    char errmsg[MAX_MSG_LENG+1];
+
+    if(err == ERR_NONE)
+        return;
+
+    send_error_code_helper(errmsg, err, additional_info);
+    send_direct(socketfd, errmsg, strlen(errmsg)+1);
+}
+
+void send_error_code(Client *c, enum error_codes err, char *additional_info)
+{
+    char errmsg[MAX_MSG_LENG+1];
+
+    if(err == ERR_NONE)
+        return;
+
+    send_error_code_helper(errmsg, err, additional_info);
+    send_msg(c, errmsg, strlen(errmsg)+1);
+}
+
+
 
 
 /********************************/
@@ -245,17 +281,19 @@ static int register_client_connection()
     int duplicates = 0, max_duplicates_allowed;
     char *reg_msg;
 
+    char error_msg[MAX_MSG_LENG+1];
+
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
     {
         printf("Connection already registered. Type: %d.\n", current_client->connection_type);
-        send_msg(current_client, "AlreadyRegistered", 18);
+        send_error_code_direct(current_client->socketfd, ERR_ALREADY_JOINED, NULL);
         return 0;
     }
 
-    sscanf(buffer, "!register:username=%s", username);
+    sscanf(buffer, "!regid=%s", username);
     if(!name_is_valid(username))
     {
-        send_direct(current_client->socketfd, "InvalidUsername", 16);
+        send_error_code_direct(current_client->socketfd, ERR_INVALID_NAME, NULL);
         disconnect_client(current_client, NULL);
         return 0;
     }
@@ -288,7 +326,7 @@ static int register_client_connection()
         if(++duplicates > max_duplicates_allowed)
         {
             printf("The username \"%s\" cannot support further clients.\n", username);
-            send_direct(current_client->socketfd, "InvalidUsername", 16);
+            send_error_code_direct(current_client->socketfd, ERR_INVALID_NAME, NULL);
             disconnect_client(current_client, NULL);
             return 0;
         }
@@ -314,7 +352,7 @@ static int register_client_connection()
 
     //Reply to the new user with its new requested username
     reg_msg = malloc(BUFSIZE);
-    sprintf(reg_msg, "!regreply:username=%s", current_client->username);
+    sprintf(reg_msg, "!regid=%s", current_client->username);
     send_direct(current_client->socketfd, reg_msg, strlen(reg_msg)+1);
     free(reg_msg);
     
@@ -339,7 +377,7 @@ static int client_pm()
     if(!target)
     {
         printf("User \"%s\" not found\n", msg_target);
-        send_msg(current_client, "UserNotFound", 13);
+        send_error_code(current_client, ERR_USER_NOT_FOUND, msg_target);
         return 0;
     }
 
@@ -438,7 +476,7 @@ static int handle_client_msg(int use_pending_msg)
         printf("Received %d bytes from %s:%d: \"%.*s\"\n", 
                 bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port), bytes, buffer);
 
-        if(strncmp(buffer, "!register:", 10) == 0)
+        if(strncmp(buffer, "!regid=", 7) == 0)
             return register_client_connection();
 
         else if(strncmp(buffer, "!xfersend=", 10) == 0)

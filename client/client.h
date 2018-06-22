@@ -2,8 +2,10 @@
 #define _CLIENT_H_
 
 #include "../common/common.h"
+#include "commands.h"
 #include "file_transfer_client.h"
 #include "group.h"
+
 
 #define MAX_EPOLL_EVENTS    32 
 #define CLIENT_EPOLL_FLAGS         (EPOLLIN)

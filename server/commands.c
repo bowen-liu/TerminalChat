@@ -82,7 +82,7 @@ int parse_client_command()
     else
     {
         printf("Invalid command \"%s\"\n", msg_body);
-        send_msg(current_client, "InvalidCmd.", 12);
+        send_error_code(current_client, ERR_INVALID_CMD, NULL);
         return 0;
     }
         

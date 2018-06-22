@@ -60,4 +60,6 @@ void kill_connection(int *socketfd);
 void disconnect_client(Client *c, char *reason);
 void cleanup_timer_event(TimerEvent *timer);
 
+void send_error_code(Client *c, enum error_codes err, char *additional_info);
+
 #endif

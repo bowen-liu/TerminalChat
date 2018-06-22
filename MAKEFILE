@@ -44,7 +44,10 @@ group_client.o: common.o
 file_transfer_client.o: common.o
 	$(CC) $(CFLAGS) -c client/file_transfer_client.c
 
-client.o: group_client.o file_transfer_client.o
+client_commands.o: group_client.o file_transfer_client.o
+	$(CC) $(CFLAGS) -c client/commands.c -o client_commands.o
+
+client.o: client_commands.o
 	$(CC) $(CFLAGS) -c client/client.c
 
 #Client Main

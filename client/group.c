@@ -6,6 +6,44 @@
 /*  Server Control Messages   */
 /******************************/
 
+void parse_userlist()
+{
+    char group_name[USERNAME_LENG+1];
+    char* newbuffer = buffer;
+    char* token;
+    unsigned int users_online;
+
+    //Parse the header
+    token = strtok(newbuffer, ",");
+    if(!token)
+        return;
+    sscanf(token, "!userlist=%u", &users_online);
+
+    //Is the following token the name of a group?
+    token = strtok(NULL, ",");
+    if(!token)
+        return;
+
+    //This is a group userlist
+    if(strncmp(token, "group=", 6) == 0)
+    {
+        sscanf(token, "group=%[^,]", group_name);
+        printf("%u user(s) are currently online in the group \"%s\":\n", users_online, group_name);
+        token = strtok(NULL, ",");
+    }
+
+    //This is a global userlist
+    else
+        printf("%u users are currently online:\n", users_online);
+
+    //Extract each subsequent user's name
+    while(token)
+    {
+        printf("%s\n", token);
+        token = strtok(NULL, ",");
+    }
+}
+
 //TODO: Maybe allow the user to choose to decline an invitation?
 void group_invited()
 {

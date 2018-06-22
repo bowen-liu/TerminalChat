@@ -463,7 +463,7 @@ int new_client_transfer()
     {
         printf("User \"%s\" not found\n", msg_target);
         free(xferargs);
-        send_msg(current_client, "UserNotFound", 13);
+        send_error_code(current_client, ERR_USER_NOT_FOUND, NULL);
         return 0;
     }
 
@@ -524,7 +524,7 @@ int accepted_file_transfer()
     if(!validate_transfer_target(xferargs, current_client->username, target_username, &target_ret))
     {
         printf("Transfer information mismatched. Cancelling...\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_error_code(current_client, ERR_INCORRECT_INFO, NULL);
         free(xferargs);
         return 0;
     }
@@ -532,7 +532,7 @@ int accepted_file_transfer()
     if(target_ret.target_type != USER_TARGET)
     {
         printf("Target is not a user. Cancelling...\n");
-        send_msg(current_client, "WrongInfo", 10);
+        send_error_code(current_client, ERR_INCORRECT_INFO, NULL);
         free(xferargs);
         return 0;
     }
@@ -569,7 +569,7 @@ int rejected_file_transfer()
     if(!target || !target->c->file_transfers || strcmp(target->c->file_transfers->target_user->username, current_client->username) != 0)
     {
         printf("User has no pending file transfer.\n");
-        send_msg(current_client, "NoFileFound", 12); 
+        send_error_code(current_client, ERR_NO_XFER_FOUND, target->c->username);
         return 0;
     }
 
@@ -598,7 +598,7 @@ int user_cancelled_transfer()
     if(!current_client->file_transfers)
     {
         printf("User has no pending or ongoing file transfer to cancel.\n");
-        send_msg(current_client, "NoFileFound", 12); 
+        send_error_code(current_client, ERR_NO_XFER_FOUND, NULL);
         return 0;
     }
     printf("File Transfer with \"%s\" has been cancelled. Reason: \"%s\"\n", target_name, reason);
@@ -753,7 +753,7 @@ int put_new_file_to_group()
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_PUTFILE) )
     {
         printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         free(xferargs);
         return 0;
     }
@@ -809,7 +809,7 @@ int get_new_file_from_group()
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
     {
         printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->username, msg_target);
-        send_msg(current_client, "NoPermission", 13);
+        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         free(xferargs);
         return 0;
     }
@@ -820,7 +820,7 @@ int get_new_file_from_group()
     {
         printf("Could not find a file associated with fileid %u in group \"%s\"\n", requested_fileid, xferargs->target_group->groupname);
         free(xferargs);
-        send_msg(current_client, "WrongInfo", 10);
+        send_error_code(current_client, ERR_INCORRECT_INFO, NULL);
         return 0;
     }
 

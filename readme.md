@@ -59,10 +59,17 @@ The !newgroup command allows the caller to create a new group with the name spec
 
 The command also optionally allow the caller to specifiy a number of other users (as _invited_user_n_) to be invited automatically to the group after creation, all as group admins. 
 
+### !grouplist
+Syntax: ```!grouplist```
+
+The !grouplist command allows the client to obtain a list of all publicly joinable groups currently on the server. This list will not include invite-only groups (even if you've joined them). 
+
+If an server administrator call this command, this command will include ALL groups (including the invite-only ones). Additionally, the command will also include the number of users in each group, as well as the flags set in each group.
+
 ### !userlist
 Syntax: ```@@<group_name> !userlist```
 
-The userlist command allows the client to obtain a list of all users current joined the group group_name. The calling client itself must have already joined the specified group_name in order to obtain the userlist. If a target group was not specified, a list of all users connected to the server is returned instead.
+The !userlist command allows the client to obtain a list of all users current joined the group group_name. The calling client itself must have already joined the specified group_name in order to obtain the userlist. If a target group was not specified, a list of all users connected to the server is returned instead.
 
 #### !join, !leave
 Syntax: ``` !join <group_name> ```
@@ -130,14 +137,14 @@ The !setflag command changes settings for a targeted _group_, and will affect al
 
 One or more permission altering operations can be specified (as _permission_n_). These operations are applied from left to right, and a later permission may override an earlier applied permission. Below is a list of available operations that adds/removes flags from the target _group_:
 
-* SET_INVITE_ONLY / UNSET_INVITE_ONLY
-    If a group's "INVITE_ONLY" flag is set, other users cannot freely join the group with the "!join" command. They must be invited by existing group members.
+    -SET_INVITE_ONLY / UNSET_INVITE_ONLY
+        If a group's "INVITE_ONLY" flag is set, other users cannot freely join the group with the "!join" command. They must be invited by existing group members.
 
-* SET_TRANSFER_ALLOWED / UNSET_TRANSFER_ALLOWED
-    If a group's "TRANSFER_ALLOWED" flag is set, group members are allowed to upload/download files to/from the group. This flag will override the user permission "CAN_PUTFILE" and "CAN_GETFILE".
+    -SET_TRANSFER_ALLOWED / UNSET_TRANSFER_ALLOWED
+        If a group's "TRANSFER_ALLOWED" flag is set, group members are allowed to upload/download files to/from the group. This flag will override the user permission "CAN_PUTFILE" and "CAN_GETFILE".
     
-* SET_PERSISTENT / UNSET_PERSISTENT
-    If a group's "PERSISTENT" flag is set, the group will not be deleted if all members leave. **This flag can only be changed by SERVER ADMINS.**
+    -SET_PERSISTENT / UNSET_PERSISTENT
+        If a group's "PERSISTENT" flag is set, the group will not be deleted if all members leave. This flag can only be changed by SERVER ADMINS!
 
 To use the !setflag command, the caller must have the CAN_SETPERM permission in the target group. Additionally, flags in the lobby group cannot be altered, even if the caller is a server admin.
 

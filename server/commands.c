@@ -21,6 +21,9 @@ int parse_client_command()
 
 
     /*Group related Commands. Implemented in group.c*/
+    else if(strcmp(msg_body, "!grouplist") == 0)
+        return grouplist();
+    
     else if(strncmp(msg_body, "!userlist", 9) == 0)
         return userlist();
 
@@ -286,10 +289,10 @@ int handle_admin_commands(char *buffer)
     else if(strncmp(buffer, "!unbanip ", 9) == 0)
         admin_unban_user(buffer);
 
-    else if(strncmp(buffer, "!promoteadmin ", 14) == 0)
+    else if(strncmp(buffer, "!promoteuser ", 13) == 0)
         admin_promote_user(buffer);
 
-    else if(strncmp(buffer, "!demoteadmin ", 13) == 0)
+    else if(strncmp(buffer, "!demoteuser ", 12) == 0)
         admin_demote_user(buffer);
 
     else

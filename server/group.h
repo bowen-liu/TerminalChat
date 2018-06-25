@@ -14,10 +14,13 @@
 #define GRP_PERM_DEFAULT_ADMIN  (GRP_PERM_CAN_TALK | GRP_PERM_CAN_INVITE | GRP_PERM_CAN_PUTFILE | GRP_PERM_CAN_GETFILE | GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
 #define GRP_PERM_ADMIN_CHECK    (GRP_PERM_CAN_KICK | GRP_PERM_CAN_SETPERM)
 
-/*Permission flags for individual groups*/
+/*Permission flags for individual groups. Defined in common.h now*/
+
+/*
 #define GRP_FLAG_PERSISTENT     0x1
 #define GRP_FLAG_INVITE_ONLY    0x2
 #define GRP_FLAG_ALLOW_XFER     0x4
+*/
 
 #define GRP_FLAG_DEFAULT        (GRP_FLAG_ALLOW_XFER)
 
@@ -91,6 +94,7 @@ Group_Member* allocate_group_member(Group *group, Client *target_user, int permi
 GroupList* find_from_grouplist(GroupList* list, char *groupname);
 void remove_group(Group *group);
 
+int grouplist();
 int userlist();
 int create_new_group();
 int leave_group_direct(Group *group, Client *c, char *reason, int delete_group_joined_entry);

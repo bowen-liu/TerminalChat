@@ -6,6 +6,52 @@
 /*  Server Control Messages   */
 /******************************/
 
+void parse_grouplist()
+{
+    char* newbuffer = buffer;
+    char* token, *flags_start;
+    unsigned int group_count;
+    unsigned int group_flags, group_member_count;
+
+    //Parse the header
+    token = strtok(newbuffer, ";");
+    if(!token)
+        return;
+
+    sscanf(token, "!grouplist=%u", &group_count);
+    printf("There are currently %u public groups available:\n", group_count);
+
+    token = strtok(NULL, ";");
+    while(token)
+    {
+        flags_start = strchr(token, ',');
+
+        //Regular users will only receive each public group's name
+        if(!flags_start)
+            printf("\"%s\"\n", token);
+        
+        //Admins gets additional information after the group name.
+        else
+        {
+            printf("\"%.*s\" \t\t Members: %u \t\t", (unsigned int)(flags_start - token), token, group_member_count);
+            sscanf(++flags_start, "f=%u,m=%u", &group_flags, &group_member_count);
+
+            printf("(");
+            if(group_flags & GRP_FLAG_PERSISTENT)
+                printf("persistent,");
+
+            if(group_flags & GRP_FLAG_INVITE_ONLY)
+                printf("invite_only,");
+            
+            if(group_flags & GRP_FLAG_ALLOW_XFER)
+                printf("allow_xfer,");
+            printf(")\n");
+        }
+        
+        token = strtok(NULL, ";");
+    }
+}
+
 void parse_userlist()
 {
     char group_name[USERNAME_LENG+1];

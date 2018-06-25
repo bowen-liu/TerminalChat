@@ -287,6 +287,43 @@ GroupList* find_from_grouplist(GroupList* list, char *groupname)
 /*      Group Operations    */
 /******************************/
 
+int grouplist()
+{
+    char* userlist_msg;
+    size_t userlist_size = 0;
+    unsigned int group_count;
+    Group *curr, *tmp;
+
+    group_count = HASH_COUNT(groups);
+    userlist_msg = malloc(group_count * (USERNAME_LENG+1) * 2);
+    sprintf(userlist_msg, "!grouplist=%u", group_count);
+    userlist_size = strlen(userlist_msg);
+
+    //Iterate through the list of groups created. Invite only groups are only displayed for server admins
+    HASH_ITER(hh, groups, curr, tmp)
+    {
+        if(curr->group_flags & GRP_FLAG_INVITE_ONLY)
+            if(!current_client->is_admin)
+                continue;
+        
+        sprintf(&userlist_msg[userlist_size], ";%s", curr->groupname);
+
+        //If an admin requested it, append the group flags and member count
+        if(current_client->is_admin)
+        {
+            userlist_size = strlen(userlist_msg);
+            sprintf(&userlist_msg[userlist_size], ",f=%u,m=%u", curr->group_flags, HASH_COUNT(curr->members));
+        }
+
+        userlist_size = strlen(userlist_msg);
+    }
+    
+    send_long_msg(current_client, userlist_msg, userlist_size+1);
+    free(userlist_msg);
+
+    return group_count;
+}
+
 static int userlist_group(char *group_name)
 {
     char* userlist_msg;

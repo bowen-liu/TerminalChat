@@ -113,6 +113,8 @@ void parse_control_message(char* cmd_buffer)
         parse_error_code();
 
     /*Group operations. Implemented in group.c*/
+    else if(strncmp("!grouplist=", buffer, 10) == 0)
+        parse_grouplist();
 
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();

@@ -47,6 +47,13 @@
 #define LOCAL_FOLDER_PERMISSION 600
 
 
+/*Group Flags*/
+#define GRP_FLAG_PERSISTENT     0x1
+#define GRP_FLAG_INVITE_ONLY    0x2
+#define GRP_FLAG_ALLOW_XFER     0x4
+
+
+
 enum sendrecv_target {NO_TARGET = 0, USER_TARGET, GROUP_TARGET};
 
 enum error_codes   {ERR_NONE = 0, ERR_INVALID_CMD, ERR_INVALID_NAME, ERR_USER_NOT_FOUND, 

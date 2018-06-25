@@ -1,6 +1,10 @@
 # Terminal Chat
 Terminal Chat is a multiuser, multichannel chat and file sharing program built on a multiple clients, single server model. 
 
+A connected user may join one or more existing channel (referred as a _group_ in this program) to engage in multiway chat with other members, or create a new group with the user's own topic of interest. Each group is privately moderated by the group creator, and group administrators designated by the group creator. Server administrators may also intervene if needed. 
+
+The connected user may also privately and directly message other users connected to the server. Files can also be shared directly between two users, or uploaded to a group to be shared with multiple users on-demand.
+
 ## Prerequisites
 TerminalChat is designed to run on Linux only, but porting it to other OS should not be very difficult. Both server and client has been tested on Ubuntu natively, as well as Ubuntu running on WSL. 
 
@@ -84,9 +88,11 @@ Syntax: ```@@<group_name> !kick <member_1> <member_2> ... <member_n>```
 If one or more members in a group (named _group_name_) is being disruptive, these members can be temporarily removed from a group by the !kick command. The kicked member can rejoin the group immediately after (or being invited back).
 
 Syntax: ```@@<group_name> !ban <member_1> <member_2> ... <member_n>```
+
 To permanently remove disruptive members from a group (named _group_name_), one or more members (named _member_n_) can be IP banned from the group by using the !ban command. No furthur users with a banned IP address can join the group again (even if the member was invited).
 
 Syntax: ```@@<group_name> !unban <target_1> <target_2> ... <target_n>```
+
 To revoke an IP ban in a group (named _group_name_), the !unban command is used. If a banned member is currently connected to the server, the IP ban for the member can be revoked by simply specifying _target_n_ as the member's username. 
 
 If a banned member is no longer connected to the server, the only way to unban the member is by explicitly entering the IP address or hostname of the banned member as _target_n_ (if known). If the banned member's IP/hostname is not explicitly known, you must wait for the banned user to cone online again and unban its IP by using the member's username.
@@ -124,14 +130,14 @@ The !setflag command changes settings for a targeted _group_, and will affect al
 
 One or more permission altering operations can be specified (as _permission_n_). These operations are applied from left to right, and a later permission may override an earlier applied permission. Below is a list of available operations that adds/removes flags from the target _group_:
 
-    -SET_INVITE_ONLY / UNSET_INVITE_ONLY
-        If a group's "INVITE_ONLY" flag is set, other users cannot freely join the group with the "!join" command. They must be invited by existing group members.
+* SET_INVITE_ONLY / UNSET_INVITE_ONLY
+    If a group's "INVITE_ONLY" flag is set, other users cannot freely join the group with the "!join" command. They must be invited by existing group members.
 
-    -SET_TRANSFER_ALLOWED / UNSET_TRANSFER_ALLOWED
-        If a group's "TRANSFER_ALLOWED" flag is set, group members are allowed to upload/download files to/from the group. This flag will override the user permission "CAN_PUTFILE" and "CAN_GETFILE".
+* SET_TRANSFER_ALLOWED / UNSET_TRANSFER_ALLOWED
+    If a group's "TRANSFER_ALLOWED" flag is set, group members are allowed to upload/download files to/from the group. This flag will override the user permission "CAN_PUTFILE" and "CAN_GETFILE".
     
-    -SET_PERSISTENT / UNSET_PERSISTENT
-        If a group's "PERSISTENT" flag is set, the group will not be deleted if all members leave. **This flag can only be changed by SERVER ADMINS.**
+* SET_PERSISTENT / UNSET_PERSISTENT
+    If a group's "PERSISTENT" flag is set, the group will not be deleted if all members leave. **This flag can only be changed by SERVER ADMINS.**
 
 To use the !setflag command, the caller must have the CAN_SETPERM permission in the target group. Additionally, flags in the lobby group cannot be altered, even if the caller is a server admin.
 
@@ -167,9 +173,9 @@ Syntax: ```!cancelfile```
 
 The !cancelfile command has two uses:
 
-    -The **sender** can use this command to cancel a pending outgoing file transfer invitation (!sendfile). Once the pending invitation has been cancelled, the target user can no longer accept it. 
+* The **sender** can use this command to cancel a pending outgoing file transfer invitation (!sendfile). Once the pending invitation has been cancelled, the target user can no longer accept it. 
 
-    -Either **sender or receiver** can use this command to cancel an ongoing transfer.
+* Either **sender or receiver** can use this command to cancel an ongoing transfer.
 
 Because each user can only have one pending or ongoing transfer, this command do not need a target to be specified.
 

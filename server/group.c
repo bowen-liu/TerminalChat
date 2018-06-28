@@ -68,6 +68,20 @@ unsigned int send_lobby(Client *c, char* buffer, size_t size)
     send_group(lobby, bcast_buffer, strlen(bcast_buffer)+1);
 }
 
+unsigned int send_all_joined_groups(Client *c, char *buffer, size_t size)
+{
+    GroupList *current_group, *tmp;
+    int count = 0;
+
+    LL_FOREACH_SAFE(c->groups_joined, current_group, tmp)
+    {   
+        if(send_group(current_group->group, buffer, size))
+            ++count;
+    }
+
+    return count;
+}
+
 int group_msg()
 {
     char gmsg[MAX_MSG_LENG+1];
@@ -238,7 +252,16 @@ int basic_group_permission_check(char *group_name, Group **group_ret, Group_Memb
 {
     Group *group;
     Group_Member *member;
-    char *groupname_plain = plain_name(group_name);
+    char *groupname_plain;
+
+    if(!group_name || strlen(group_name) == 0)
+    {
+        printf("Empty group name specified.\n");
+        send_error_code(current_client, ERR_GROUP_NOT_FOUND, NULL);
+        return 0;
+    }
+
+    groupname_plain = plain_name(group_name);
 
     //Check if this group exists
     HASH_FIND_STR(groups, groupname_plain, group);
@@ -284,7 +307,7 @@ GroupList* find_from_grouplist(GroupList* list, char *groupname)
 
 
 /******************************/
-/*      Group Operations    */
+/*      Group Operations      */
 /******************************/
 
 int grouplist()
@@ -324,7 +347,7 @@ int grouplist()
     return group_count;
 }
 
-static int userlist_group(char *group_name)
+int userlist_group(char *group_name)
 {
     char* userlist_msg;
     size_t userlist_size = 0;
@@ -366,45 +389,9 @@ static int userlist_group(char *group_name)
     return mcount;
 }
 
-int userlist()
-{
-    char* userlist_msg;
-    size_t userlist_size = 0;
-    User *curr, *temp;
-
-    //Is the user requesting a userlist of a group, or a userlist of everyone online?
-    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
-    {
-        msg_target += 2;
-        return userlist_group(msg_target);
-    }
-
-    userlist_msg = malloc(total_users * (USERNAME_LENG+1) * 2);
-    sprintf(userlist_msg, "!userlist=%d", total_users);
-    userlist_size = strlen(userlist_msg);
-
-    //Iterate through the list of active usernames and append them to the buffer one at a time
-    HASH_ITER(hh, active_users, curr, temp)
-    {
-        strcat(userlist_msg, ",");
-        strcat(userlist_msg, curr->username);
-
-        if(curr->c->is_admin)
-            strcat(userlist_msg, " (server admin)");
-    }
-
-    userlist_size = strlen(userlist_msg) + 1;
-    userlist_msg[userlist_size] = '\0';
-    
-    send_long_msg(current_client, userlist_msg, userlist_size);
-    free(userlist_msg);
-
-    return total_users;
-}
-
 static Group* create_new_group_direct(char *groupname, int skip_name_check)
 {
-    Group* newgroup;
+    Group *newgroup;
 
     //Strip any leading '@' from the proposed name, if any
     while(groupname[0] == '@')
@@ -1108,18 +1095,10 @@ int set_group_permission()
     if(!basic_group_permission_check(msg_target, &group, &target_member))
         return 0;
 
-    //Check if the requesting user has suffice permissions to change group flags
-    if(!(target_member->permissions & GRP_PERM_CAN_SETPERM))
+    //Check if the requesting user has suffice permissions to change group flags. Also, don't allow changes to the lobby
+    if(!(target_member->permissions & GRP_PERM_CAN_SETPERM) || group == lobby)
     {
         printf("User \"%s\" tried to change user permissions from group \"%s\", but the user does not have the permission.\n", current_client->username, msg_target);
-        send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
-        return 0;
-    }
-
-    //Don't allow the lobby group flags to be changed
-    if(strcmp(group->groupname, LOBBY_GROUP_NAME) == 0)
-    {
-        printf("User \"%s\" tried to change group flags for lobby.\n", current_client->username);
         send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         return 0;
     }
@@ -1160,6 +1139,50 @@ int set_group_permission()
 
         token = strtok(NULL, " ");
     }
+
+    return 1;
+}
+
+int group_namechange(char *groupname, char *newname)
+{
+    char namechange_msg[MAX_MSG_LENG+1];
+    Group *current_group, *exiting_group;
+    Group_Member *calling_member;
+
+    //Check if the requesting user has suffice permissions to change the name
+    if(!basic_group_permission_check(groupname, &current_group, &calling_member))
+        return 0;
+
+    //Check if calling user has permission. Also, don't allow lobby name to be changed
+    if(!(calling_member->permissions & GRP_PERM_CAN_SETPERM) || current_group == lobby)
+    {
+        printf("User \"%s\" does not have the permission to change the group (%s) 's name.\n", current_client->username, groupname);
+        send_error_code(current_client, ERR_NO_PERMISSION, groupname);
+        return 0;
+    }
+
+    //Check if the newname is valid, and doesn't already exist
+    if(!name_is_valid(newname))
+    {
+        send_error_code(current_client, ERR_INVALID_NAME, groupname);
+        return 0;
+    }
+
+    HASH_FIND_STR(groups, newname, exiting_group);
+    if(exiting_group)
+    {
+        printf("Group \"%s\" already exists.\n", groupname);
+        send_error_code(current_client, ERR_INVALID_NAME, groupname);
+        return 0;
+    }
+
+    sprintf(namechange_msg, "!namechange=%s,%s,g", current_group->groupname, newname);
+
+    //Update the group from the list of groups on the server
+    HASH_DEL(groups, current_group);
+    strcpy(current_group->groupname, newname);
+    HASH_ADD_STR(groups, groupname, current_group);
+    send_group(current_group, namechange_msg, strlen(namechange_msg)+1);
 
     return 1;
 }

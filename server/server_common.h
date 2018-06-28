@@ -56,10 +56,11 @@ typedef struct timerevent{
 
 
 User* get_current_client_user();
+void send_error_code(Client *c, enum error_codes err, char *additional_info);
 void kill_connection(int *socketfd);
 void disconnect_client(Client *c, char *reason);
 void cleanup_timer_event(TimerEvent *timer);
+unsigned int handle_new_username(char *requested_name, char *new_username_ret);
 
-void send_error_code(Client *c, enum error_codes err, char *additional_info);
 
 #endif

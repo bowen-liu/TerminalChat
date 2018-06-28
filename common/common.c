@@ -78,15 +78,22 @@ int update_epoll_events(int epoll_fd, int socketfd, int event_flags)
 int name_is_valid(char* name)
 {
     int i;
-    unsigned int name_leng = strlen(name);
+    unsigned int name_leng;
+
+    if(!name)
+    {
+        printf("Name is NULL\n");
+        return 0;
+    }
     
+    //Check the length of specified name
+    name_leng = strlen(name);
     if(name_leng == 0)
     {
         printf("Name is empty\n");
         return 0;
-    }
-    
-    if(name_leng > USERNAME_LENG)
+    }  
+    else if(name_leng > USERNAME_LENG)
     {
         printf("Name is too long.\n");
         return 0;

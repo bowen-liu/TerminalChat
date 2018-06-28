@@ -26,15 +26,6 @@ Pending_Msg pending_msg;
 
 
 
-static void exit_cleanup()
-{
-    if(file_transfers)
-        cancel_transfer(file_transfers);
-    
-    close(my_socketfd);
-    pthread_cancel(connection_thread);
-}
-
 /******************************/
 /*     Basic Send/Receive     */
 /******************************/
@@ -172,6 +163,16 @@ register_with_server_failed:
 /******************************/
 /*   Core Client Operations   */
 /******************************/
+
+static void exit_cleanup()
+{
+    if(file_transfers)
+        cancel_transfer(file_transfers);
+    
+    close(my_socketfd);
+    pthread_cancel(connection_thread);
+}
+
 
 static void handle_main_socket_events(int events)
 {         

@@ -6,6 +6,21 @@
 /*  Server Control Messages   */
 /******************************/
 
+void parse_namechange()
+{
+    char orig_name[USERNAME_LENG+1], new_name[USERNAME_LENG+1], flags[8];
+
+    sscanf(buffer, "!namechange=%[^,],%[^,],%s", orig_name, new_name, flags);
+
+    if(strlen(flags) > 0 && flags[0] == 'g')
+        printf("Group ");
+    else
+        printf("User ");
+
+    printf("\"%s\" has changed its name to \"%s\".\n", orig_name, new_name);
+}
+
+
 void parse_grouplist()
 {
     char* newbuffer = buffer;

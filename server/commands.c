@@ -8,9 +8,100 @@
 /*      Client Operations     */
 /******************************/
 
+int userlist()
+{
+    char* userlist_msg;
+    size_t userlist_size = 0;
+    User *curr, *temp;
+
+    //Is the user requesting a userlist of a group, or a userlist of everyone online?
+    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
+    {
+        msg_target += 2;
+        return userlist_group(msg_target);                      //Implemented in group.c
+    }
+
+    userlist_msg = malloc(total_users * (USERNAME_LENG+1) * 2);
+    sprintf(userlist_msg, "!userlist=%d", total_users);
+    userlist_size = strlen(userlist_msg);
+
+    //Iterate through the list of active usernames and append them to the buffer one at a time
+    HASH_ITER(hh, active_users, curr, temp)
+    {
+        strcat(userlist_msg, ",");
+        strcat(userlist_msg, curr->username);
+
+        if(curr->c->is_admin)
+            strcat(userlist_msg, " (server admin)");
+    }
+
+    userlist_size = strlen(userlist_msg) + 1;
+    userlist_msg[userlist_size] = '\0';
+    
+    send_long_msg(current_client, userlist_msg, userlist_size);
+    free(userlist_msg);
+
+    return total_users;
+}
+
+
+int client_namechange()
+{
+    char namechange_msg[MAX_MSG_LENG+1];
+    char new_username[USERNAME_LENG+1];
+    User *current_user;
+
+    GroupList *current_grouplist, *tmp_grouplist;
+    Group *current_group;
+    Group_Member *current_member;
+    
+    //Skips the "!namechange " header and jump straight to the requested name
+    msg_body += 12;     
+    
+    //Changing name for a group instead?
+    if(msg_target && strncmp(msg_target, "@@", 2) == 0)
+    {
+        msg_target += 2;
+        return group_namechange(msg_target, msg_body);          //Implemented in group.c
+    }
+    
+    //Check for username validity and then check for duplicates
+    if(!handle_new_username(msg_body, new_username))                   
+    {
+        send_error_code(current_client, ERR_INVALID_NAME, NULL);
+        return 0;
+    }
+
+    current_user = get_current_client_user();
+    sprintf(namechange_msg, "!namechange=%s,%s", current_user->username, new_username);
+
+    //Update the user's member entry for each group joined by the requested user
+    LL_FOREACH_SAFE(current_client->groups_joined, current_grouplist, tmp_grouplist)
+    {   
+        current_group = current_grouplist->group;
+        HASH_FIND_STR(current_group->members, current_user->username, current_member);
+
+        //Update the hashtable entry for the group member
+        HASH_DEL(current_group->members, current_member);
+        strcpy(current_member->username, new_username);
+        HASH_ADD_STR(current_group->members, username, current_member);
+    }
+
+    //Update active user list
+    HASH_DEL(active_users, current_user);
+    strcpy(current_user->username, new_username);
+    HASH_ADD_STR(active_users, username, current_user);
+
+    //Update the user's connection entry
+    strcpy(current_client->username, new_username);
+    send_all_joined_groups(current_client, namechange_msg, strlen(namechange_msg)+1);
+    return 1;
+}
+
+
 int parse_client_command()
 {
-    /*Connection related commands*/
+    /*Connection and server related commands*/
 
     if(strcmp(msg_body, "!close") == 0)
     {
@@ -19,13 +110,17 @@ int parse_client_command()
         return -1;
     }
 
+    else if(strncmp(msg_body, "!userlist", 9) == 0 && 
+            (msg_body[9] == '\0' || msg_body[9] == ' '))
+        return userlist();
 
+    else if(strncmp(msg_body, "!namechange ", 12) == 0)
+        return client_namechange();
+
+    
     /*Group related Commands. Implemented in group.c*/
     else if(strcmp(msg_body, "!grouplist") == 0)
         return grouplist();
-    
-    else if(strncmp(msg_body, "!userlist", 9) == 0)
-        return userlist();
 
     else if(strncmp(msg_body, "!newgroup ", 10) == 0)
         return create_new_group();
@@ -67,6 +162,7 @@ int parse_client_command()
 
     else if(strncmp(msg_body, "!cancelfile", 11) == 0)
         return user_cancelled_transfer();
+
 
     /*File Transfer for Groups*/
     else if(strcmp(msg_body, "!filelist") == 0)

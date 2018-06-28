@@ -49,62 +49,83 @@ If the first character of the message body is a "!", the message body will be in
 
 In the sections below, all available commands available will be documented.
 
-## Group Commands
+## General Commands
 
-### Basic Group Operations
-#### !newgroup
-Syntax: ```!newgroup <group_name> <invited_user_1> <invited_user_2> ... <invited_user_n>```
+#### !namechange
+Syntax: ```!namechange <new_name>```
 
-The !newgroup command allows the caller to create a new group with the name specified as _group_name_. All groups must have unique names, or else the operation is rejected. Upon successfully creating a new group, the caller is automatically added to the group as an admin. 
+The !namechange command allows you to change your current username to a new desired name (_new_name_). If the selected new name is already taken, a duplicate number will be appended at the end of the new name. Your name change will be announced to all groups you are currently participating.
 
-The command also optionally allow the caller to specifiy a number of other users (as _invited_user_n_) to be invited automatically to the group after creation, all as group admins. 
+Syntax: ```@@<group> !namechange <new_name>```
 
-### !grouplist
+The !namechange command can also be used to change the name of an existing group. Duplicate group names are not permitted. The calling member must have the CAN_SETPERM permission in the target _group_. The name of the lobby cannot be changed.
+
+#### !userlist
+Syntax: ```!userlist```
+
+The !userlist command will return a list of all currently connected users on the server, regardless of what groups they have joined.
+
+Syntax: ```@@<group> !userlist```
+
+If a specific target _group_ is specified with the !userlist command, the command will return a list of users that has joined the targetted _group_. The calling client itself must have already joined the specified group in order to obtain the userlist. 
+
+#### !grouplist
 Syntax: ```!grouplist```
 
 The !grouplist command allows the client to obtain a list of all publicly joinable groups currently on the server. This list will not include invite-only groups (even if you've joined them). 
 
 If an server administrator call this command, this command will include ALL groups (including the invite-only ones). Additionally, the command will also include the number of users in each group, as well as the flags set in each group.
 
-### !userlist
-Syntax: ```@@<group_name> !userlist```
+#### !close
+Syntax: ```!close```
 
-The !userlist command allows the client to obtain a list of all users current joined the group group_name. The calling client itself must have already joined the specified group_name in order to obtain the userlist. If a target group was not specified, a list of all users connected to the server is returned instead.
+When a client enters the !close command, it will gracefully disconnect with the server and exits the chat program.
+
+
+## Group Commands
+
+### Basic Group Operations
+#### !newgroup
+Syntax: ```!newgroup <group> <invited_user_1> <invited_user_2> ... <invited_user_n>```
+
+The !newgroup command allows the caller to create a new group with the name specified as _group_. All groups must have unique names, or else the operation is rejected. Upon successfully creating a new group, the caller is automatically added to the group as an admin. 
+
+The command also optionally allow the caller to specifiy a number of other users (as _invited_user_n_) to be invited automatically to the group after creation, all as group admins. 
 
 #### !join, !leave
-Syntax: ``` !join <group_name> ```
+Syntax: ``` !join <group> ```
 
-An user may join an existing group (with the name _group_name_) with the !join command. If the target group's invite only flag is set, or the user has been previously banned from the target group, this command will be rejected.
+An user may join an existing group (with the name _group_) with the !join command. If the target group's invite only flag is set, or the user has been previously banned from the target group, this command will be rejected.
 
-Syntax: ``` !leave <group_name> ```
+Syntax: ``` !leave <group> ```
 
-Conversely, an user may leave one of the groups he/she has previously joined (with the name _group_name_) using the !leave command. Once left, the user will no longer receive messages from the group he/she has left.
+Conversely, an user may leave one of the groups he/she has previously joined (with the name _group_) using the !leave command. Once left, the user will no longer receive messages from the group he/she has left.
 
 #### !invite
-Syntax: ```@@<group_name> !invite <invited_user_1> <invited_user_2> ... <invited_user_n>```
+Syntax: ```@@<group> !invite <invited_user_1> <invited_user_2> ... <invited_user_n>```
 
-An existing group member may add one or more new users (as _invited_user_n_) to a group (as _group_name_) by using the !invite command. All invited members are added as regular members, not admins. If the target group has the invite only flag set, this is the only way for new users to join the group.
+An existing group member may add one or more new users (as _invited_user_n_) to a group (as _group_) by using the !invite command. All invited members are added as regular members, not admins. If the target group has the invite only flag set, this is the only way for new users to join the group.
 
-The calling member must have the "CAN_INVITE" permission in group "_group_name_" to use the !invite command.
+The calling member must have the "CAN_INVITE" permission in group "_group_" to use the !invite command.
 
 
 ### Group Administrative Operations
 #### !kick, !ban, !unban
-Syntax: ```@@<group_name> !kick <member_1> <member_2> ... <member_n>```
+Syntax: ```@@<group> !kick <member_1> <member_2> ... <member_n>```
 
-If one or more members in a group (named _group_name_) is being disruptive, these members can be temporarily removed from a group by the !kick command. The kicked member can rejoin the group immediately after (or being invited back).
+If one or more members in a group (named _group_) is being disruptive, these members can be temporarily removed from a group by the !kick command. The kicked member can rejoin the group immediately after (or being invited back).
 
-Syntax: ```@@<group_name> !ban <member_1> <member_2> ... <member_n>```
+Syntax: ```@@<group> !ban <member_1> <member_2> ... <member_n>```
 
-To permanently remove disruptive members from a group (named _group_name_), one or more members (named _member_n_) can be IP banned from the group by using the !ban command. No furthur users with a banned IP address can join the group again (even if the member was invited).
+To permanently remove disruptive members from a group (named _group_), one or more members (named _member_n_) can be IP banned from the group by using the !ban command. No furthur users with a banned IP address can join the group again (even if the member was invited).
 
-Syntax: ```@@<group_name> !unban <target_1> <target_2> ... <target_n>```
+Syntax: ```@@<group> !unban <target_1> <target_2> ... <target_n>```
 
-To revoke an IP ban in a group (named _group_name_), the !unban command is used. If a banned member is currently connected to the server, the IP ban for the member can be revoked by simply specifying _target_n_ as the member's username. 
+To revoke an IP ban in a group (named _group_), the !unban command is used. If a banned member is currently connected to the server, the IP ban for the member can be revoked by simply specifying _target_n_ as the member's username. 
 
 If a banned member is no longer connected to the server, the only way to unban the member is by explicitly entering the IP address or hostname of the banned member as _target_n_ (if known). If the banned member's IP/hostname is not explicitly known, you must wait for the banned user to cone online again and unban its IP by using the member's username.
 
-Note: The calling member must have the "CAN_KICK" permission in group "_group_name_" to use the !kick, !ban, and !unban command.
+Note: The calling member must have the "CAN_KICK" permission in group "_group_" to use the !kick, !ban, and !unban command.
 
 #### !setperm
 Syntax: ```@@<group> !setperm <target> <permission_1> <permission_2> ... <permission_n>```

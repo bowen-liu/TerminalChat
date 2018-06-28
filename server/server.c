@@ -126,14 +126,52 @@ void disconnect_client(Client *c, char *reason)
     free(c);
 }
 
-
-static void exit_cleanup()
+unsigned int handle_new_username(char *requested_name, char *new_username_ret)
 {
-    close(server_socketfd);
-    pthread_cancel(timer_event_thread);
-    pthread_cancel(network_event_thread);
-}
+    unsigned int duplicates = 0, max_duplicates_allowed;
+    User *registered_user;
+    
+    if(!name_is_valid(requested_name))
+        return 0;
 
+    //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
+    HASH_FIND_STR(active_users, requested_name, registered_user);
+    while(registered_user != NULL)
+    {
+        if(duplicates == 0)
+        {
+            //How many reminaing free bytes in the username can be used for appending numbers?
+            max_duplicates_allowed = USERNAME_LENG - strlen(requested_name) - 1;
+
+            //Determine the largest numerical value (up to 999) can be used from the free bytes
+            if(max_duplicates_allowed > 3)
+                max_duplicates_allowed = 999;
+            else if(max_duplicates_allowed == 2)
+                max_duplicates_allowed = 99;
+            else if(max_duplicates_allowed == 1)
+                max_duplicates_allowed = 9;
+            else
+                max_duplicates_allowed = 0;
+        }
+
+        if(++duplicates > max_duplicates_allowed)
+        {
+            printf("The username \"%s\" cannot support further clients.\n", requested_name);
+            return 0;
+        }
+
+        //Append a sequential number after the duplicate username, and check if it already exists
+        sprintf(new_username_ret, "%s_%u", requested_name, duplicates);
+        HASH_FIND_STR(active_users, new_username_ret, registered_user);
+    }
+
+    if(duplicates)
+        printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, requested_name);
+    else
+        strcpy(new_username_ret, requested_name);
+
+    return strlen(new_username_ret);
+}
 
 
 /******************************/
@@ -275,10 +313,7 @@ void send_error_code(Client *c, enum error_codes err, char *additional_info)
 static int register_client_connection()
 {
     char username[USERNAME_LENG+1];
-    unsigned int orig_username_leng;
     User *registered_user;
-
-    int duplicates = 0, max_duplicates_allowed;
     char reg_msg[MAX_MSG_LENG+1];
 
     if(current_client->connection_type != UNREGISTERED_CONNECTION)
@@ -288,55 +323,18 @@ static int register_client_connection()
         return 0;
     }
 
-    sscanf(buffer, "!regid=%s", username);
-    if(!name_is_valid(username))
+    //Cancel the unregistered idle timer
+    cleanup_timer_event(current_client->idle_timer);
+    current_client->idle_timer = NULL;
+    
+    //Check for name validity and then check for duplicates
+    if(!handle_new_username(&buffer[7], username))                     //Skips the "!regid=" header
     {
         send_error_code_direct(current_client->socketfd, ERR_INVALID_NAME, NULL);
         disconnect_client(current_client, NULL);
         return 0;
     }
-    orig_username_leng = strlen(username);
-
-    //Cancel the unregistered idle timer
-    cleanup_timer_event(current_client->idle_timer);
-    current_client->idle_timer = NULL;
     
-    //Check if the requested username is a duplicate. Append a number (up to 999) after the username if it already exists 
-    HASH_FIND_STR(active_users, username, registered_user);
-    while(registered_user != NULL)
-    {
-        if(duplicates == 0)
-        {
-            //How many reminaing free bytes in the username can be used for appending numbers?
-            max_duplicates_allowed = USERNAME_LENG - orig_username_leng - 1;
-
-            //Determine the largest numerical value (up to 999) can be used from the free bytes
-            if(max_duplicates_allowed > 3)
-                max_duplicates_allowed = 999;
-            else if(max_duplicates_allowed == 2)
-                max_duplicates_allowed = 99;
-            else if(max_duplicates_allowed == 1)
-                max_duplicates_allowed = 9;
-            else
-                max_duplicates_allowed = 0;
-        }
-
-        if(++duplicates > max_duplicates_allowed)
-        {
-            printf("The username \"%s\" cannot support further clients.\n", username);
-            send_error_code_direct(current_client->socketfd, ERR_INVALID_NAME, NULL);
-            disconnect_client(current_client, NULL);
-            return 0;
-        }
-
-        //Append a sequential number after the duplicate username, and check if it already exists
-        sprintf(&username[orig_username_leng], "_%d", duplicates);
-        HASH_FIND_STR(active_users, username, registered_user);
-    }
-
-    if(duplicates)
-        printf("Found %d other clients with the same username. Changed username to \"%s\".\n", duplicates, username);
-
     //Register the client's requested username
     registered_user = malloc(sizeof(User));
     registered_user->c = current_client;
@@ -395,6 +393,14 @@ static int client_pm()
 /******************************/
 /*    Core Server Operations  */
 /******************************/
+
+static void exit_cleanup()
+{
+    close(server_socketfd);
+    pthread_cancel(timer_event_thread);
+    pthread_cancel(network_event_thread);
+}
+
 
 static int handle_new_connection()
 {    

@@ -119,6 +119,9 @@ void parse_control_message(char* cmd_buffer)
     else if(strncmp("!userlist=", buffer, 10) == 0)
         parse_userlist();
 
+    else if(strncmp("!namechange=", buffer, 12) == 0)
+        parse_namechange();
+
     else if(strncmp("!invite=", buffer, 8) == 0)
         group_invited();
 

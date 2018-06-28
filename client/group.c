@@ -18,6 +18,10 @@ void parse_namechange()
         printf("User ");
 
     printf("\"%s\" has changed its name to \"%s\".\n", orig_name, new_name);
+
+    //Update my username, if the server confirmed a namechange for myself
+    if(strcmp(orig_name, my_username) == 0)
+        strcpy(my_username, new_name);
 }
 
 

@@ -47,7 +47,6 @@ typedef struct {
 
 
 typedef struct {
-    char username[USERNAME_LENG+1];
     Client *c;
     int permissions;
 
@@ -90,11 +89,12 @@ unsigned int send_group(Group* group, char* buffer, size_t size);
 unsigned int send_all_joined_groups(Client *c, char *buffer, size_t size);
 int group_msg();
 
-void disconnect_client_group_cleanup(Client *c, char *reason);
-int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
+Group_Member* find_member_from_name(Group *group, char *username);
 Group_Member* allocate_group_member(Group *group, Client *target_user, int permissions);
 GroupList* find_from_grouplist(GroupList* list, char *groupname);
 void remove_group(Group *group);
+void disconnect_client_group_cleanup(Client *c, char *reason);
+int basic_group_permission_check(char *group_name, Group **group_ret, Group_Member **member_ret);
 
 int grouplist();
 int userlist_group(char *group_name);

@@ -31,7 +31,7 @@ int userlist()
         strcat(userlist_msg, ",");
         strcat(userlist_msg, curr->username);
 
-        if(curr->c->is_admin)
+        if(curr->c->user->is_admin)
             strcat(userlist_msg, " (server admin)");
     }
 
@@ -51,7 +51,6 @@ int client_namechange()
     char new_username[USERNAME_LENG+1];
     User *current_user;
 
-    GroupList *current_grouplist, *tmp_grouplist;
     Group *current_group;
     Group_Member *current_member;
     
@@ -75,25 +74,13 @@ int client_namechange()
     current_user = get_current_client_user();
     sprintf(namechange_msg, "!namechange=%s,%s", current_user->username, new_username);
 
-    //Update the user's member entry for each group joined by the requested user
-    LL_FOREACH_SAFE(current_client->groups_joined, current_grouplist, tmp_grouplist)
-    {   
-        current_group = current_grouplist->group;
-        HASH_FIND_STR(current_group->members, current_user->username, current_member);
-
-        //Update the hashtable entry for the group member
-        HASH_DEL(current_group->members, current_member);
-        strcpy(current_member->username, new_username);
-        HASH_ADD_STR(current_group->members, username, current_member);
-    }
-
     //Update active user list
     HASH_DEL(active_users, current_user);
     strcpy(current_user->username, new_username);
     HASH_ADD_STR(active_users, username, current_user);
 
     //Update the user's connection entry
-    strcpy(current_client->username, new_username);
+    strcpy(current_client->user->username, new_username);
     send_all_joined_groups(current_client, namechange_msg, strlen(namechange_msg)+1);
     return 1;
 }
@@ -110,8 +97,7 @@ int parse_client_command()
         return -1;
     }
 
-    else if(strncmp(msg_body, "!userlist", 9) == 0 && 
-            (msg_body[9] == '\0' || msg_body[9] == ' '))
+    else if(strcmp(msg_body, "!userlist") == 0)
         return userlist();
 
     else if(strncmp(msg_body, "!namechange ", 12) == 0)
@@ -336,7 +322,7 @@ static void admin_promote_user(char *buffer)
         return;
     }
 
-    target_user->c->is_admin = 1;
+    target_user->c->user->is_admin = 1;
     printf("User \"%s\" has been made into a server admin.\n", target_user->username);
     send_msg(target_user->c, promote_msg, strlen(promote_msg)+1);
 }
@@ -357,7 +343,7 @@ static void admin_demote_user(char *buffer)
         return;
     }
 
-    target_user->c->is_admin = 0;
+    target_user->c->user->is_admin = 0;
     printf("User \"%s\" has been demoted back to a regular user.\n", target_user->username);
     send_msg(target_user->c, promote_msg, strlen(promote_msg)+1);
 }

@@ -215,7 +215,7 @@ void cancel_user_transfer(Client *c)
 
     if(!c->file_transfers)
     {
-        printf("User %s have no pending transfers to cancel.\n", c->username);
+        printf("User %s have no pending transfers to cancel.\n", c->user->username);
         return;
     }
 
@@ -225,13 +225,13 @@ void cancel_user_transfer(Client *c)
         HASH_FIND_INT(active_connections, &c->file_transfers->xfer_socketfd, xfer_connection);
         if(xfer_connection)
         {
-            printf("Disconnecting ongoing transfer connection for user %s.\n", c->username);
+            printf("Disconnecting ongoing transfer connection for user %s.\n", c->user->username);
             cleanup_transfer_connection(xfer_connection);
             c->file_transfers = NULL;
             return;
         }
 
-        printf("Cannot find user \"%s\"'s transfer socket.\n ", c->username);
+        printf("Cannot find user \"%s\"'s transfer socket.\n ", c->user->username);
     }
 
 
@@ -257,7 +257,7 @@ void transfer_invite_expired(Client *c)
     send_msg(c, expire_msg, strlen(expire_msg)+1);
 
     //Notify the receiver of file expiry
-    sprintf(expire_msg, "!cancelfile=%s,reason=%s", c->username, "Expired");
+    sprintf(expire_msg, "!cancelfile=%s,reason=%s", c->user->username, "Expired");
     send_msg(c->file_transfers->target_user->c, expire_msg, strlen(expire_msg)+1);
 
     cancel_user_transfer(c);
@@ -466,9 +466,9 @@ int new_client_transfer()
 
     //Send out a file transfer request to the target
     sprintf(sendfile_msg, "!sendfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
+            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->user->username, xferargs->token);
     printf("Forwarding file transfer request from user \"%s\" to  user \"%s\", for file \"%s\" (%zu bytes, token: %s, checksum: %x)\n", 
-            current_client->username, xferargs->target_user->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum);
+            current_client->user->username, xferargs->target_user->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum);
 
     send_msg(xferargs->target_user->c, sendfile_msg, strlen(sendfile_msg)+1);
     send_msg(current_client, "Delivered", 10);
@@ -502,14 +502,14 @@ int accepted_file_transfer()
     sscanf(buffer, "!acceptfile=%[^,],size=%zu,crc=%x,target=%[^,],token=%s", 
             xferargs->filename, &xferargs->filesize, &xferargs->checksum, target_username, xferargs->token);
     printf("User \"%s\" has accepted the file \"%s\" (%zu bytes, token: %s, checksum: %x) from user \"%s\"\n", 
-            current_client->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, target_username);
+            current_client->user->username, xferargs->filename, xferargs->filesize, xferargs->token, xferargs->checksum, target_username);
 
     xferargs->operation = RECVING_OP;
     xferargs->target_type = USER_TARGET;
 
     //Matches with the target user's transfer information with the info provided in the request
     memset(&target_ret, 0, sizeof(XferTarget));
-    if(!validate_transfer_target(xferargs, current_client->username, target_username, &target_ret))
+    if(!validate_transfer_target(xferargs, current_client->user->username, target_username, &target_ret))
     {
         printf("Transfer information mismatched. Cancelling...\n");
         send_error_code(current_client, ERR_INCORRECT_INFO, NULL);
@@ -535,7 +535,7 @@ int accepted_file_transfer()
     
     //Forward the accept message to the sender
     sprintf(accept_msg, "!acceptfile=%s,size=%zu,crc=%x,target=%s,token=%s", 
-            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->username, xferargs->token);
+            xferargs->filename, xferargs->filesize, xferargs->checksum, current_client->user->username, xferargs->token);
     send_msg(xferargs->target_user->c, accept_msg, strlen(accept_msg)+1);
 
     return 1;
@@ -552,10 +552,10 @@ int rejected_file_transfer()
     sscanf(buffer, "!rejectfile=%[^,],reason=%s", target_name, reason);
 
     HASH_FIND_STR(active_users, target_name, target);
-    if(!target || !target->c->file_transfers || strcmp(target->c->file_transfers->target_user->username, current_client->username) != 0)
+    if(!target || !target->c->file_transfers || strcmp(target->c->file_transfers->target_user->username, current_client->user->username) != 0)
     {
         printf("User has no pending file transfer.\n");
-        send_error_code(current_client, ERR_NO_XFER_FOUND, target->c->username);
+        send_error_code(current_client, ERR_NO_XFER_FOUND, target->c->user->username);
         return 0;
     }
 
@@ -563,7 +563,7 @@ int rejected_file_transfer()
     send_msg(current_client, "Cancelled", 10); 
 
     //Notify the target 
-    sprintf(reject_msg, "!rejectfile=%s,reason=%s", current_client->username, reason);
+    sprintf(reject_msg, "!rejectfile=%s,reason=%s", current_client->user->username, reason);
     send_msg(target->c, reject_msg, strlen(reject_msg)+1);
 
     cancel_user_transfer(target->c);
@@ -589,7 +589,7 @@ int user_cancelled_transfer()
     send_msg(current_client, "Cancelled", 10); 
 
     //Notify the target 
-    sprintf(reject_msg, "!cancelfile=%s,reason=%s", current_client->username, reason);
+    sprintf(reject_msg, "!cancelfile=%s,reason=%s", current_client->user->username, reason);
     send_msg(current_client->file_transfers->target_user->c, reject_msg, strlen(reject_msg)+1);  
 
     cancel_user_transfer(current_client);
@@ -734,7 +734,7 @@ int put_new_file_to_group()
     //Check if group allows file transfers and the user has such permission.
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_PUTFILE) )
     {
-        printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->username, msg_target);
+        printf("User \"%s\" is not permitted to upload files to group \"%s\"\n", current_client->user->username, msg_target);
         send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         free(xferargs);
         return 0;
@@ -788,7 +788,7 @@ int get_new_file_from_group()
     //Check if group allows file transfers and the user has such permission.
     if( !(xferargs->target_group->group_flags & GRP_FLAG_ALLOW_XFER) || !(target_member->permissions & GRP_PERM_CAN_GETFILE) )
     {
-        printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->username, msg_target);
+        printf("User \"%s\" is not permitted to download files from group \"%s\"\n", current_client->user->username, msg_target);
         send_error_code(current_client, ERR_NO_PERMISSION, msg_target);
         free(xferargs);
         return 0;

@@ -2,7 +2,8 @@
 #define _SERVER_COMMON_H_
 
 #include "../common/common.h"  
-   
+
+struct user;
 struct group_list;
 struct filexferargs_server;
 struct timerevent;
@@ -18,15 +19,8 @@ typedef struct {
     int sockaddr_leng;
     enum connection_type connection_type;
 
-    /*Userinfo*/
-    char username[USERNAME_LENG+1];
-    unsigned int is_admin :1;
-
-    /*Pending Long Message (if any)*/
-    Pending_Msg pending_msg;
-
     /*Descriptors for other server components*/
-    struct grouplist *groups_joined;
+    struct user *user;
     struct filexferargs_server *file_transfers;
     struct timerevent *idle_timer;
 
@@ -35,10 +29,19 @@ typedef struct {
 
 
 //Maps a username to a client object
-typedef struct {
+typedef struct user {
+
+    /*Main user info*/
     char username[USERNAME_LENG+1];
+    unsigned int is_admin :1;
     Client *c;
 
+    /*Pending Long Message (if any)*/
+    Pending_Msg pending_msg;
+
+    /*Descriptors for other server components*/
+    struct grouplist *groups_joined;
+    
     UT_hash_handle hh;
 } User;
 

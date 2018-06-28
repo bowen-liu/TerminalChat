@@ -32,6 +32,7 @@ IP_List *banned_ips;                                //All IPs that are banned fr
 
 //Client/Event being served right now
 Client *current_client;                             //Descriptor for the client being serviced right now
+User *current_user;
 TimerEvent *current_timer_event;
 
 
@@ -43,7 +44,7 @@ TimerEvent *current_timer_event;
 User* get_current_client_user()
 {
     User* user;
-    HASH_FIND_STR(active_users, current_client->username, user);
+    HASH_FIND_STR(active_users, current_client->user->username, user);
     return user;
 }
 
@@ -78,20 +79,20 @@ static inline void cleanup_user_connection(Client *c, char *reason)
 {
     User *user;
 
-    printf("Disconnecting \"%s\"...\n", c->username);
+    printf("Disconnecting \"%s\"...\n", c->user->username);
     
     //If the disconnecting user has an ongoing transfer connection, kill it first.
     cancel_user_transfer(c);
 
     //Close the main user's connection
     kill_connection(&c->socketfd);
-    printf("Closed user connection for \"%s\"\n", c->username);
+    printf("Closed user connection for \"%s\"\n", c->user->username);
         
     //Leave participating chat groups
     disconnect_client_group_cleanup(c, reason);
         
     //Free up resources used by the user
-    HASH_FIND_STR(active_users, c->username, user);
+    HASH_FIND_STR(active_users, c->user->username, user);
     HASH_DEL(active_users, user);
     free(user);
     
@@ -182,12 +183,12 @@ static unsigned int transfer_next_pending(Client *c)
 {
     int retval;
 
-    retval = transfer_next_common(c->socketfd, &c->pending_msg);
+    retval = transfer_next_common(c->socketfd, &c->user->pending_msg);
     if(retval <= 0)
         disconnect_client(c, "Connection Failed");
     
     //Remove the EPOLLOUT notification once long send has completed
-    if(c->pending_msg.pending_op == NO_XFER_OP)
+    if(c->user->pending_msg.pending_op == NO_XFER_OP)
     {
         update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS);
         printf("Completed partial transfer.\n");
@@ -203,7 +204,7 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
     if(c->socketfd == 0)
         return 0;
 
-    retval = send_msg_common(c->socketfd, buffer, size, &c->pending_msg);
+    retval = send_msg_common(c->socketfd, buffer, size, &c->user->pending_msg);
     
     if(retval < 0)
         disconnect_client(c, "Connection Failed");
@@ -211,7 +212,7 @@ unsigned int send_msg(Client *c, char* buffer, size_t size)
         return 0;
 
     //Start of a new long send. Register the client's FD to signal on EPOLLOUT
-    if(c->pending_msg.pending_op == SENDING_OP)
+    if(c->user->pending_msg.pending_op == SENDING_OP)
         update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
 
     return retval;
@@ -224,7 +225,7 @@ unsigned int send_long_msg(Client *c, char* buffer, size_t size)
     if(c->socketfd == 0)
             return 0;
 
-    retval = send_msg_notruncate(c->socketfd, buffer, size, &c->pending_msg);
+    retval = send_msg_notruncate(c->socketfd, buffer, size, &c->user->pending_msg);
     
     if(retval < 0)
         disconnect_client(c, "Connection Failed");
@@ -232,7 +233,7 @@ unsigned int send_long_msg(Client *c, char* buffer, size_t size)
         return 0;
 
     //Start of a new long send. Register the client's FD to signal on EPOLLOUT
-    if(c->pending_msg.pending_op == SENDING_OP)
+    if(c->user->pending_msg.pending_op == SENDING_OP)
         update_epoll_events(connections_epollfd, c->socketfd, CLIENT_EPOLL_DEFAULT_EVENTS | EPOLLOUT);
 
     return retval;
@@ -257,7 +258,7 @@ unsigned int recv_msg(Client *c, char* buffer, size_t size)
 {
     int retval; 
 
-    retval = recv_msg_common(c->socketfd, buffer, size, &c->pending_msg);
+    retval = recv_msg_common(c->socketfd, buffer, size, &c->user->pending_msg);
     
     if(retval < 0)
         disconnect_client(c, "Connection Failed");
@@ -344,13 +345,13 @@ static int register_client_connection()
 
     //Update the client descriptor
     current_client->connection_type = USER_CONNECTION;
-    strcpy(current_client->username, username);
+    current_client->user = registered_user;
 
     //Reply to the new user with its new requested username
-    sprintf(reg_msg, "!regid=%s", current_client->username);
+    sprintf(reg_msg, "!regid=%s", current_client->user->username);
     send_direct(current_client->socketfd, reg_msg, strlen(reg_msg)+1);
     
-    printf("User \"%s\" has connected. Total users: %d\n", current_client->username, total_users); 
+    printf("User \"%s\" has connected. Total users: %d\n", current_client->user->username, total_users); 
     
     return 1;
 }
@@ -376,12 +377,12 @@ static int client_pm()
     }
 
     //Forward message to the target
-    sprintf(pmsg, "%s (PM): %s", current_client->username, msg_body);
+    sprintf(pmsg, "%s (PM): %s", current_client->user->username, msg_body);
     if(send_msg(target->c, pmsg, strlen(pmsg)+1) <= 0)
         return 0;
 
     //Echo back to the sender
-    sprintf(pmsg, "%s (PM to %s): %s", current_client->username, msg_target, msg_body);
+    sprintf(pmsg, "%s (PM to %s): %s", current_client->user->username, msg_target, msg_body);
     send_msg(current_client, pmsg, strlen(pmsg)+1);
     
     return 1;
@@ -458,54 +459,60 @@ static int handle_new_connection()
     return 1;
 } 
 
+static inline int handle_unregistered_client_msg()
+{
+    //NOTE: The client/server will not deal with partial send/recvs during registration.
+    
+    int bytes;
+    
+    bytes = recv_direct(current_client->socketfd, buffer, MAX_MSG_LENG+1);
+
+    if(!bytes)
+        return 0;
+    
+    printf("Received %d bytes from %s:%d: \"%.*s\"\n", 
+            bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port), bytes, buffer);
+
+    if(strncmp(buffer, "!regid=", 7) == 0)
+        return register_client_connection();
+
+    else if(strncmp(buffer, "!xfersend=", 10) == 0)
+        return register_send_transfer_connection();
+    
+    else if(strncmp(buffer, "!xferrecv=", 10) == 0)
+        return register_recv_transfer_connection();
+
+    else
+        disconnect_client(current_client, NULL);   
+    return 0;
+}
+
 static int handle_client_msg(int use_pending_msg)
 {
     int bytes;
 
+    //If this connection is not yet registered, the client must register itself before anything else can be done.
+    if(current_client->connection_type == UNREGISTERED_CONNECTION)
+        return handle_unregistered_client_msg();
+    
     //If this connection is a transfer connection, forward the data contained directly to its target
-    if(current_client->connection_type == TRANSFER_CONNECTION)
+    else if(current_client->connection_type == TRANSFER_CONNECTION)
         return client_data_forward_sender_ready(); 
     
-    //If this connection is not yet registered, the client must register itself before anything else can be done.
-    //The client/server will not deal with partial send/recvs during this stage.
-    else if(current_client->connection_type == UNREGISTERED_CONNECTION)
-    {
-        bytes = recv_direct(current_client->socketfd, buffer, MAX_MSG_LENG+1);
-        
-        if(!bytes)
-            return 0;
-        
-        printf("Received %d bytes from %s:%d: \"%.*s\"\n", 
-                bytes, inet_ntoa(current_client->sockaddr.sin_addr), ntohs(current_client->sockaddr.sin_port), bytes, buffer);
-
-        if(strncmp(buffer, "!regid=", 7) == 0)
-            return register_client_connection();
-
-        else if(strncmp(buffer, "!xfersend=", 10) == 0)
-            return register_send_transfer_connection();
-        
-        else if(strncmp(buffer, "!xferrecv=", 10) == 0)
-            return register_recv_transfer_connection();
-
-        else
-            disconnect_client(current_client, NULL);   
-        return 0;
-    }
-
     //Read regular user's message
     if(use_pending_msg)
     {
         //will pending_msg.pending_buffer ever be bigger than the server's default buffer?
-        bytes = current_client->pending_msg.pending_size;
+        bytes = current_client->user->pending_msg.pending_size;
         if(bytes > BUFSIZE)
         {
             printf("Too big for message buffer: %d bytes.\n", bytes);
-            clean_pending_msg(&current_client->pending_msg);
+            clean_pending_msg(&current_client->user->pending_msg);
             return 0;
         }
 
-        memcpy(buffer, current_client->pending_msg.pending_buffer, current_client->pending_msg.pending_size);
-        clean_pending_msg(&current_client->pending_msg);
+        memcpy(buffer, current_client->user->pending_msg.pending_buffer, current_client->user->pending_msg.pending_size);
+        clean_pending_msg(&current_client->user->pending_msg);
     }
     else
     {
@@ -514,17 +521,17 @@ static int handle_client_msg(int use_pending_msg)
             return 0;
         
         //Message has not been received completely yet
-        if(current_client->pending_msg.pending_op != NO_XFER_OP)
+        if(current_client->user->pending_msg.pending_op != NO_XFER_OP)
             return 1;
     }
 
-    printf("Received from %s: \"%.*s\"\n", current_client->username, bytes, buffer);
+    printf("Received from %s: \"%.*s\"\n", current_client->user->username, bytes, buffer);
     seperate_target_command(buffer, &msg_target, &msg_body);
 
     //Parse as a command if message begins with '!'
     if(msg_body && msg_body[0] == '!')
     {
-        if(strncmp(msg_body, "!admin ", 7) == 0 && current_client->is_admin)
+        if(strncmp(msg_body, "!admin ", 7) == 0 && current_client->user->is_admin)
             return handle_admin_commands(&msg_body[7]);
         return parse_client_command();
     }
@@ -657,12 +664,12 @@ static inline void server_main_loop()
                 //Handles EPOLLIN (ready for reading)
                 else if(events[i].events & EPOLLIN)
                 {
-                    if(current_client->pending_msg.pending_op == RECVING_OP)
+                    if(current_client->user && current_client->user->pending_msg.pending_op == RECVING_OP)
                     {
                         transfer_next_pending(current_client);
                         
                         //Check if the entire message has been received
-                        if(current_client->pending_msg.pending_op == NO_XFER_OP)
+                        if(current_client->user->pending_msg.pending_op == NO_XFER_OP)
                             handle_client_msg(1);
                         continue;
                     }
@@ -677,13 +684,13 @@ static inline void server_main_loop()
                     if(current_client->connection_type == TRANSFER_CONNECTION)
                         client_data_forward_recver_ready();
                     
-                    else if(current_client->pending_msg.pending_op == SENDING_OP)
+                    else if(current_client->user->pending_msg.pending_op == SENDING_OP)
                     {
                         transfer_next_pending(current_client);
 
-                        if(current_client->pending_msg.pending_op == NO_XFER_OP)
+                        if(current_client->user->pending_msg.pending_op == NO_XFER_OP)
                         {
-                            clean_pending_msg(&current_client->pending_msg);
+                            clean_pending_msg(&current_client->user->pending_msg);
                             continue;
                         }
                     } 
